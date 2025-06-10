@@ -42,23 +42,23 @@ algorithm_choice = st.sidebar.radio(
 
 # Store Hours
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Store Hours</h3>', unsafe_allow_html=True)
-store_open_time_str = st.sidebar.text_input("Store Open Time (e.g., 08:00 AM)", "8:00 AM")
-store_close_time_str = st.sidebar.text_input("Store Close Time (e.g., 11:00 PM)", "11:00 PM")
+store_open_time_str = st.sidebar.text_input("Store Open Time (e.g., 08:00 AM)", "7:30 AM")
+store_close_time_str = st.sidebar.text_input("Store Close Time (e.g., 11:00 PM)", "10:00 PM")
 
 store_open_dt = parse_time_input(store_open_time_str, REF_DATE_FOR_PARSING)
 store_close_dt = parse_time_input(store_close_time_str, REF_DATE_FOR_PARSING)
 
 # Employees
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Employees</h3>', unsafe_allow_html=True)
-num_employees = st.sidebar.number_input("Number of Employees Working", min_value=1, value=2, step=1)
+num_employees = st.sidebar.number_input("Number of Employees Working", min_value=1, value=3, step=1)
 
 employee_data_list = []
 for i in range(num_employees):
     st.sidebar.markdown(f"--- **Employee {i+1}** ---")
     emp_name = st.sidebar.text_input(f"Name (Employee {i+1})", key=f"name_{i}")
-    shift_start_str = st.sidebar.text_input(f"Shift Start (Employee {i+1})", "9:00 AM", key=f"s_start_{i}")
-    shift_end_str = st.sidebar.text_input(f"Shift End (Employee {i+1})", "5:00 PM", key=f"s_end_{i}")
-    break_start_str = st.sidebar.text_input(f"Break Start (Employee {i+1})", "1:00 PM", key=f"break_{i}")
+    shift_start_str = st.sidebar.text_input(f"Shift Start (Employee {i+1})", " ", key=f"s_start_{i}")
+    shift_end_str = st.sidebar.text_input(f"Shift End (Employee {i+1})", " ", key=f"s_end_{i}")
+    break_start_str = st.sidebar.text_input(f"Break Start (Employee {i+1})", " ", key=f"break_{i}")
     
     has_tofftl = st.sidebar.checkbox(f"Training Off The Line for Employee {i+1}?", key=f"has_tofftl_{i}")
     tofftl_start_str = None
