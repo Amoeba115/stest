@@ -1,8 +1,7 @@
 # File: scheduler_logic.py
 import pandas as pd
 from io import StringIO
-from datetime import datetime
-from itertools import permutations
+from datetime import datetime, time
 import copy
 
 # ==============================================================================
@@ -55,7 +54,7 @@ def preprocess_employee_data(employee_data_list):
 
 
 # ==============================================================================
-# SECTION 2: REWRITTEN "COMPLEX" (TIERED GREEDY) SCHEDULER
+# SECTION 2: REWRITTEN "COMPLEX" (HEURISTIC) SCHEDULER
 # ==============================================================================
 COMPLEX_WORK_POSITIONS = ["Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Expo", "Drink Maker 1", "Drink Maker 2", "Line Buster 3"]
 COMPLEX_ALL_POSITIONS = COMPLEX_WORK_POSITIONS + ["Break", "ToffTL"]
@@ -66,93 +65,104 @@ def create_schedule_complex(store_open_time_obj, store_close_time_obj, employee_
     if df_long.empty: return "No employee data to process."
 
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
-    employee_info = {t: g.to_dict('records') for t, g in df_long.groupby('Time')}
+    
+    # Create a map of who is available at each time slot
+    availability = {t: set() for t in time_slots}
+    for _, row in df_long.iterrows():
+        if not row['IsOnBreak'] and not row['IsOnToffTL']:
+            availability[row['Time']].add(row['EmployeeNameFML'])
 
-    # State tracking for employees
-    employee_states = {} # {emp: {'last_pos': str, 'time_in_pos': int, 'history': list}}
-
-    schedule_rows = []
-
-    for time_slot_str in time_slots:
-        current_assignments = {p: "" for p in COMPLEX_ALL_POSITIONS}
-        current_assignments["Break"] = []
-        current_assignments["ToffTL"] = []
+    # Initialize the final schedule grid
+    schedule = {t: {p: "" for p in COMPLEX_ALL_POSITIONS} for t in time_slots}
+    
+    # --- PASS 1: Pre-assign Conductors ---
+    # This pass fulfills the second-priority Conductor rule first.
+    employee_last_worked = {emp: -100 for emp in df_long['EmployeeNameFML'].unique()}
+    for i, slot_str in enumerate(time_slots):
+        slot_time = parse_time_input(slot_str, datetime(1970,1,1).date()).time()
         
-        time_slot_obj = parse_time_input(time_slot_str, datetime(1970,1,1).date())
-
-        # --- Step 1: Handle Breaks/ToffTL (Hard Rule) ---
-        available_for_work = []
-        for emp_details in employee_info[time_slot_str]:
-            emp_name = emp_details['EmployeeNameFML']
-            if emp_details['IsOnBreak']:
-                current_assignments["Break"].append(emp_name)
-                employee_states[emp_name] = {'last_pos': 'Break', 'time_in_pos': 1, 'history': []}
-            elif emp_details['IsOnToffTL']:
-                current_assignments["ToffTL"].append(emp_name)
-                # Don't reset state for ToffTL to track duration
-                if employee_states.get(emp_name, {}).get('last_pos') == 'ToffTL':
-                    employee_states[emp_name]['time_in_pos'] += 1
-                else:
-                    employee_states[emp_name] = {'last_pos': 'ToffTL', 'time_in_pos': 1, 'history': []}
-            else:
-                available_for_work.append(emp_name)
-        
-        # --- Step 2: Assign available workers to positions based on priority ---
-        assigned_this_slot = set()
-        for pos in COMPLEX_WORK_POSITIONS:
+        # Rule: Conductor should start on the :00
+        if slot_time.minute != 0:
+            continue
             
-            # --- Candidate Selection ---
+        # Check if there's a subsequent slot for a full hour
+        if i + 1 >= len(time_slots):
+            continue
+
+        next_slot_str = time_slots[i+1]
+        
+        # Find best candidate available for both time slots
+        best_candidate = None
+        max_idle_time = -1
+        
+        # Find employees available for the full hour who haven't worked recently
+        possible_candidates = list(availability[slot_str].intersection(availability[next_slot_str]))
+        
+        for emp in sorted(possible_candidates):
+            idle_time = i - employee_last_worked[emp]
+            if idle_time > max_idle_time:
+                max_idle_time = idle_time
+                best_candidate = emp
+        
+        if best_candidate:
+            schedule[slot_str]['Conductor'] = best_candidate
+            schedule[next_slot_str]['Conductor'] = best_candidate
+            availability[slot_str].remove(best_candidate)
+            availability[next_slot_str].remove(best_candidate)
+            employee_last_worked[best_candidate] = i + 1
+
+
+    # --- PASS 2: Fill all other positions ---
+    employee_states = {} # {emp: {'last_pos': str, 'time_in_pos': int}}
+    for i, slot_str in enumerate(time_slots):
+        # Assign breaks/tofftl to the schedule grid first
+        for _, row in df_long[df_long['Time'] == slot_str].iterrows():
+            if row['IsOnBreak']:
+                if 'Break' not in schedule[slot_str]: schedule[slot_str]['Break'] = []
+                schedule[slot_str]['Break'].append(row['EmployeeNameFML'])
+            if row['IsOnToffTL']:
+                if 'ToffTL' not in schedule[slot_str]: schedule[slot_str]['ToffTL'] = []
+                schedule[slot_str]['ToffTL'].append(row['EmployeeNameFML'])
+
+        for pos in COMPLEX_WORK_POSITIONS:
+            if schedule[slot_str][pos]:  # Skip if already filled (e.g., Conductor)
+                continue
+
             best_candidate = None
-            best_candidate_score = -1
-
-            eligible_candidates = [e for e in available_for_work if e not in assigned_this_slot]
-
-            for emp in eligible_candidates:
+            # Find a candidate from the remaining available pool
+            for emp in sorted(list(availability[slot_str])):
                 state = employee_states.get(emp, {})
                 last_pos = state.get('last_pos')
                 time_in_pos = state.get('time_in_pos', 0)
-                
+
                 # --- Hard Rule Checks ---
-                if pos in COMPLEX_LINE_BUSTER_ROLES and time_in_pos >= 1 and last_pos == pos: continue
-                if pos not in COMPLEX_LINE_BUSTER_ROLES and time_in_pos >= 2 and last_pos == pos: continue
-
-                # --- Scoring based on priority rules ---
-                score = 10 # Base score for being eligible
+                if pos in COMPLEX_LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 1:
+                    continue # Employee has been on this Line Buster role for 30 mins
+                if pos not in COMPLEX_LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 2:
+                    continue # Employee has been on this non-LB role for an hour
                 
-                # Second-Priority Rules
-                if pos == 'Conductor':
-                    if last_pos == 'Conductor' and time_in_pos == 1: score += 50 # High score for continuing Conductor
-                    elif time_slot_obj.minute == 0: score += 20 # Good score for starting on the hour
-                
-                # Third-Priority Rules (lower score boosts)
-                # Simplified check to avoid direct back-and-forth
-                if len(state.get('history', [])) > 1 and state['history'][-2] == pos:
-                    score -= 5 # Penalize for ABAB pattern
+                # If all checks pass, we have a potential candidate.
+                # A more complex version could add scoring for third-priority rules here.
+                best_candidate = emp
+                break # Take the first available candidate
 
-                if score > best_candidate_score:
-                    best_candidate = emp
-                    best_candidate_score = score
-            
             if best_candidate:
-                current_assignments[pos] = best_candidate
-                assigned_this_slot.add(best_candidate)
-
-                # Update state for the chosen employee
+                schedule[slot_str][pos] = best_candidate
+                availability[slot_str].remove(best_candidate)
+                
+                # Update state
                 state = employee_states.get(best_candidate, {})
-                if state.get('last_pos') == pos:
-                    state['time_in_pos'] += 1
-                else:
-                    state['time_in_pos'] = 1
+                if state.get('last_pos') == pos: state['time_in_pos'] += 1
+                else: state['time_in_pos'] = 1
                 state['last_pos'] = pos
-                state.setdefault('history', []).append(pos)
                 employee_states[best_candidate] = state
-        
-        schedule_rows.append({"Time": time_slot_str, **current_assignments})
-
+    
     # --- Final Formatting ---
+    schedule_rows = [{"Time": time, **positions} for time, positions in schedule.items()]
     out_df = pd.DataFrame(schedule_rows, columns=["Time"] + COMPLEX_ALL_POSITIONS).fillna("")
-    out_df["Break"] = out_df["Break"].apply(lambda x: ", ".join(sorted(x)) if isinstance(x, list) else x)
-    out_df["ToffTL"] = out_df["ToffTL"].apply(lambda x: ", ".join(sorted(x)) if isinstance(x, list) else x)
+    for col in ["Break", "ToffTL"]:
+        out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(list(set(x)))) if isinstance(x, list) else x)
+
     final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
     return final_df.to_csv(index=False)
 
