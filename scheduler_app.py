@@ -50,7 +50,7 @@ store_close_dt = parse_time_input(store_close_time_str, REF_DATE_FOR_PARSING)
 
 # Employees
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Employees</h3>', unsafe_allow_html=True)
-num_employees = st.sidebar.number_input("Number of Employees Working", min_value=1, value=3, step=1)
+num_employees = st.sidebar.number_input("Number of Employees Working", min_value=1, value=10, step=1)
 
 employee_data_list = []
 for i in range(num_employees):
