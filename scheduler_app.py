@@ -3,138 +3,106 @@ import streamlit as st
 import pandas as pd
 from datetime import time, datetime
 from io import StringIO
-from scheduler_logic import create_schedule, parse_time_input # from schedule-main/scheduler_logic.py
+# Import both scheduling functions
+from scheduler_logic import create_schedule_complex, create_schedule_simple
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Employee Scheduler", layout="wide") # from schedule-main/scheduler_app.py
+st.set_page_config(page_title="Employee Scheduler", layout="wide")
 
 # --- Custom Styling ---
 st.markdown("""
 <style>
-    /* Style for the main action button */
     div.stButton > button {
-        background-color: #f03c4c;
-        color: white;
-        font-size: 16px;
-        font-weight: bold;
-        border-radius: 8px;
-        border: 2px solid #f03c4c;
-        width: 100%;
+        background-color: #f03c4c; color: white; font-size: 16px; font-weight: bold;
+        border-radius: 8px; border: 2px solid #f03c4c; width: 100%;
     }
     div.stButton > button:hover {
-        background-color: #d93644;
-        border-color: #d93644;
-        color: white;
+        background-color: #d93644; border-color: #d93644; color: white;
     }
 </style>
 """, unsafe_allow_html=True)
 
-
 # --- Page Title ---
 st.markdown('<h1 style="color: #f03c4c;">Employee Schedule Generator</h1>', unsafe_allow_html=True)
-st.write("Fill in the store hours and employee details in the sidebar to generate the schedule. This generator was built for use at Swig restaurants.") # from schedule-main/scheduler_app.py
+st.write("Fill in the store hours and employee details in the sidebar to generate the schedule.")
 
 # --- Consistent Reference Date for Time Parsing ---
-REF_DATE_FOR_PARSING = datetime(1970, 1, 1).date() # from schedule-main/scheduler_app.py
+REF_DATE_FOR_PARSING = datetime(1970, 1, 1).date()
 
 # --- Input Sections in Sidebar ---
 st.sidebar.markdown('<h1 style="color: #f03c4c; font-size: 24px;">Configuration</h1>', unsafe_allow_html=True)
 
+# --- NEW: Algorithm Selector ---
+st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
+algorithm_choice = st.sidebar.radio(
+    "Select the scheduling logic:",
+    ('Complex (Rule-Based)', 'Simple (Greedy)'),
+    help="Complex logic uses backtracking to meet all rules. Simple logic is faster and uses a basic assignment strategy."
+)
+
 # Store Hours
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Store Hours</h3>', unsafe_allow_html=True)
-store_open_time_str = st.sidebar.text_input("Store Open Time (e.g., 08:00 AM)", "7:30 AM") # from schedule-main/scheduler_app.py
-store_close_time_str = st.sidebar.text_input("Store Close Time (e.g., 11:00 PM)", "10:00 PM") # from schedule-main/scheduler_app.py
+store_open_time_str = st.sidebar.text_input("Store Open Time (e.g., 08:00 AM)", "8:00 AM")
+store_close_time_str = st.sidebar.text_input("Store Close Time (e.g., 11:00 PM)", "11:00 PM")
 
-# Parse store times early for validation
-store_open_dt = parse_time_input(store_open_time_str, REF_DATE_FOR_PARSING) # from schedule-main/scheduler_app.py
-store_close_dt = parse_time_input(store_close_time_str, REF_DATE_FOR_PARSING) # from schedule-main/scheduler_app.py
+store_open_dt = parse_time_input(store_open_time_str, REF_DATE_FOR_PARSING)
+store_close_dt = parse_time_input(store_close_time_str, REF_DATE_FOR_PARSING)
 
-# Number of Employees
+# Employees
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Employees</h3>', unsafe_allow_html=True)
-num_employees = st.sidebar.number_input("Number of Employees Working", min_value=1, value=2, step=1) # from schedule-main/scheduler_app.py
+num_employees = st.sidebar.number_input("Number of Employees Working", min_value=1, value=2, step=1)
 
-employee_data_list = [] # from schedule-main/scheduler_app.py
-for i in range(num_employees): # from schedule-main/scheduler_app.py
-    st.sidebar.markdown(f"--- **Employee {i+1}** ---") # from schedule-main/scheduler_app.py
-    emp_name = st.sidebar.text_input(f"Name (Employee {i+1})", key=f"name_{i}") # from schedule-main/scheduler_app.py
-    shift_start_str = st.sidebar.text_input(f"Shift Start (Employee {i+1})", " ", key=f"s_start_{i}") # from schedule-main/scheduler_app.py
-    shift_end_str = st.sidebar.text_input(f"Shift End (Employee {i+1})", " ", key=f"s_end_{i}") # from schedule-main/scheduler_app.py
-    break_start_str = st.sidebar.text_input(f"Break Start (Employee {i+1})", " ", key=f"break_{i}") # from schedule-main/scheduler_app.py
-
-    # --- Real-time validation for employee shift times ---
-    shift_start_dt = parse_time_input(shift_start_str, REF_DATE_FOR_PARSING) # from schedule-main/scheduler_app.py
-    shift_end_dt = parse_time_input(shift_end_str, REF_DATE_FOR_PARSING) # from schedule-main/scheduler_app.py
-
-    if pd.notna(shift_start_dt) and pd.notna(store_open_dt) and shift_start_dt < store_open_dt: # from schedule-main/scheduler_app.py
-        st.sidebar.warning(f"Employee {i+1}'s shift starts before the store opens.") # from schedule-main/scheduler_app.py
-    if pd.notna(shift_end_dt) and pd.notna(store_close_dt) and shift_end_dt > store_close_dt: # from schedule-main/scheduler_app.py
-        st.sidebar.warning(f"Employee {i+1}'s shift ends after the store closes.") # from schedule-main/scheduler_app.py
-    # --- End validation ---
+employee_data_list = []
+for i in range(num_employees):
+    st.sidebar.markdown(f"--- **Employee {i+1}** ---")
+    emp_name = st.sidebar.text_input(f"Name (Employee {i+1})", key=f"name_{i}")
+    shift_start_str = st.sidebar.text_input(f"Shift Start (Employee {i+1})", "9:00 AM", key=f"s_start_{i}")
+    shift_end_str = st.sidebar.text_input(f"Shift End (Employee {i+1})", "5:00 PM", key=f"s_end_{i}")
+    break_start_str = st.sidebar.text_input(f"Break Start (Employee {i+1})", "1:00 PM", key=f"break_{i}")
     
-    has_tofftl = st.sidebar.checkbox(f"Training Off The Line (ToffTL) for Employee {i+1}?", key=f"has_tofftl_{i}") # from schedule-main/scheduler_app.py
-    tofftl_start_str = None # from schedule-main/scheduler_app.py
-    tofftl_end_str = None # from schedule-main/scheduler_app.py
-    if has_tofftl: # from schedule-main/scheduler_app.py
-        tofftl_start_str = st.sidebar.text_input(f"ToffTL Start (Employee {i+1})", "11:00 AM", key=f"tofftl_s_{i}") # from schedule-main/scheduler_app.py
-        tofftl_end_str = st.sidebar.text_input(f"ToffTL End (Employee {i+1})", "12:00 PM", key=f"tofftl_e_{i}") # from schedule-main/scheduler_app.py
+    has_tofftl = st.sidebar.checkbox(f"Training Off The Line for Employee {i+1}?", key=f"has_tofftl_{i}")
+    tofftl_start_str = None
+    tofftl_end_str = None
+    if has_tofftl:
+        tofftl_start_str = st.sidebar.text_input(f"ToffTL Start (Employee {i+1})", "11:00 AM", key=f"tofftl_s_{i}")
+        tofftl_end_str = st.sidebar.text_input(f"ToffTL End (Employee {i+1})", "12:00 PM", key=f"tofftl_e_{i}")
 
-    if emp_name: # from schedule-main/scheduler_app.py
-        employee_data_list.append({ # from schedule-main/scheduler_app.py
-            "Name": emp_name, # from schedule-main/scheduler_app.py
-            "Shift Start": shift_start_str, "Shift End": shift_end_str, # from schedule-main/scheduler_app.py
-            "Break": break_start_str, # from schedule-main/scheduler_app.py
-            "ToffTL Start": tofftl_start_str, "ToffTL End": tofftl_end_str # from schedule-main/scheduler_app.py
+    if emp_name:
+        employee_data_list.append({
+            "Name": emp_name, "Shift Start": shift_start_str, "Shift End": shift_end_str,
+            "Break": break_start_str, "ToffTL Start": tofftl_start_str, "ToffTL End": tofftl_end_str
         })
 
 # --- Generate Schedule Button ---
-if st.sidebar.button("Generate Schedule"): # from schedule-main/scheduler_app.py
-    if not employee_data_list: # from schedule-main/scheduler_app.py
-        st.error("Please add at least one employee.") # from schedule-main/scheduler_app.py
-    elif pd.isna(store_open_dt) or pd.isna(store_close_dt): # from schedule-main/scheduler_app.py
-        st.error("Invalid store open or close time format. Please use HH:MM AM/PM or HH:MM.") # from schedule-main/scheduler_app.py
+if st.sidebar.button("Generate Schedule"):
+    if not employee_data_list:
+        st.error("Please add at least one employee.")
+    elif pd.isna(store_open_dt) or pd.isna(store_close_dt):
+        st.error("Invalid store open or close time format.")
     else:
-        store_open_time_obj = store_open_dt.time() # from schedule-main/scheduler_app.py
-        store_close_time_obj = store_close_dt.time() # from schedule-main/scheduler_app.py
+        store_open_time_obj = store_open_dt.time()
+        store_close_time_obj = store_close_dt.time()
         
-        valid_employee_data = True # from schedule-main/scheduler_app.py
-        for emp_idx, emp_d in enumerate(employee_data_list): # from schedule-main/scheduler_app.py
-            if not emp_d["Name"].strip(): # from schedule-main/scheduler_app.py
-                st.error(f"Employee {emp_idx+1} name is missing.") # from schedule-main/scheduler_app.py
-                valid_employee_data = False # from schedule-main/scheduler_app.py
-                break # from schedule-main/scheduler_app.py
-        
-        if valid_employee_data: # from schedule-main/scheduler_app.py
-            with st.spinner("Generating schedule... Please wait."):
-                try:
-                    # Call the main scheduling logic
-                    schedule_csv_string = create_schedule(store_open_time_obj, store_close_time_obj, employee_data_list) # from schedule-main/scheduler_app.py
-                    
-                    st.success("Schedule Generated Successfully!") # from schedule-main/scheduler_app.py
-                    
-                    # --- Display the schedule as a DataFrame and provide download ---
-                    st.subheader("Generated Schedule") # from schedule-main/scheduler_app.py
-                    
-                    # Check for relaxation notes in the output
-                    if "NOTE:" in schedule_csv_string:
-                        note, csv_data = schedule_csv_string.split('\n\n', 1)
-                        st.info(note)
-                    else:
-                        csv_data = schedule_csv_string
+        with st.spinner(f"Generating schedule with {algorithm_choice.split(' ')[0]} logic..."):
+            try:
+                # --- Call the chosen scheduling function ---
+                if algorithm_choice == 'Complex (Rule-Based)':
+                    schedule_output = create_schedule_complex(store_open_time_obj, store_close_time_obj, employee_data_list)
+                else: # 'Simple (Greedy)'
+                    schedule_output = create_schedule_simple(store_open_time_obj, store_close_time_obj, employee_data_list)
+                
+                st.success("Schedule Generated Successfully!")
+                st.subheader("Generated Schedule")
+                
+                note, csv_data = (schedule_output.split('\n\n', 1) if "NOTE:" in schedule_output else ("", schedule_output))
+                if note: st.info(note)
 
-                    schedule_df = pd.read_csv(StringIO(csv_data)) # from schedule-main/scheduler_app.py
-                    st.dataframe(schedule_df) # from schedule-main/scheduler_app.py
-                    
-                    st.download_button( # from schedule-main/scheduler_app.py
-                        label="Download Schedule as CSV", # from schedule-main/scheduler_app.py
-                        data=csv_data, # from schedule-main/scheduler_app.py
-                        file_name="schedule.csv", # from schedule-main/scheduler_app.py
-                        mime="text/csv", # from schedule-main/scheduler_app.py
-                    )
-                    
-                except Exception as e: # from schedule-main/scheduler_app.py
-                    st.error(f"An error occurred during schedule generation: {e}") # from schedule-main/scheduler_app.py
-        else:
-            st.warning("Please correct the employee data errors in the sidebar.") # from schedule-main/scheduler_app.py
+                schedule_df = pd.read_csv(StringIO(csv_data))
+                st.dataframe(schedule_df)
+                
+                st.download_button(label="Download Schedule as CSV", data=csv_data, file_name="schedule.csv", mime="text/csv")
+                
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
 
-st.sidebar.markdown("---") # from schedule-main/scheduler_app.py
-st.sidebar.info("Ensure all time inputs are in a recognizable format (e.g., '9:00 AM', '14:30').")
+st.sidebar.markdown("---")
