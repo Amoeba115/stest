@@ -69,8 +69,8 @@ algorithm_choice = st.sidebar.radio("Select the scheduling logic:", ('Complex (R
 
 # Store Hours
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Store Hours</h3>', unsafe_allow_html=True)
-store_open_time_str = st.sidebar.text_input("Store Open Time", "8:00 AM")
-store_close_time_str = st.sidebar.text_input("Store Close Time", "11:00 PM")
+store_open_time_str = st.sidebar.text_input("Store Open Time", "7:30 AM")
+store_close_time_str = st.sidebar.text_input("Store Close Time", "10:00 PM")
 
 # Employees Section
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Employees</h3>', unsafe_allow_html=True)
@@ -88,9 +88,9 @@ for i in range(num_employees):
     
     st.sidebar.markdown(f"--- **Employee {i+1}** ---")
     emp_name = st.sidebar.text_input(f"Name (Employee {i+1})", value=defaults.get("Name", ""), key=f"name_{i}")
-    shift_start_str = st.sidebar.text_input(f"Shift Start", value=defaults.get("Shift Start", "9:00 AM"), key=f"s_start_{i}")
-    shift_end_str = st.sidebar.text_input(f"Shift End", value=defaults.get("Shift End", "5:00 PM"), key=f"s_end_{i}")
-    break_start_str = st.sidebar.text_input(f"Break Start", value=defaults.get("Break", "1:00 PM"), key=f"break_{i}")
+    shift_start_str = st.sidebar.text_input(f"Shift Start", value=defaults.get("Shift Start", " "), key=f"s_start_{i}")
+    shift_end_str = st.sidebar.text_input(f"Shift End", value=defaults.get("Shift End", " "), key=f"s_end_{i}")
+    break_start_str = st.sidebar.text_input(f"Break Start", value=defaults.get("Break", " "), key=f"break_{i}")
     
     has_tofftl_default = defaults.get("Has ToffTL", "No") == "Yes"
     has_tofftl = st.sidebar.checkbox(f"Training Off The Line?", value=has_tofftl_default, key=f"has_tofftl_{i}")
