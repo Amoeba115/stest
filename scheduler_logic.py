@@ -2,245 +2,187 @@
 import pandas as pd
 from io import StringIO
 from datetime import datetime
+from itertools import permutations
 
 # ==============================================================================
 # CONFIGURATION
-# Based on the rules provided by the user.
 # ==============================================================================
-
-# Rule 3: Position Filling Priority
 WORK_POSITIONS_PRIORITY_ORDER = [
     "Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Greeter",
     "Drink Maker 1", "Drink Maker 2", "Line Buster 3"
 ]
-
-# Defines the full list of columns for the output, including non-work roles.
-ALL_POSITIONS_ORDERED = WORK_POSITIONS_PRIORITY_ORDER + ["Break", "ToffTL"]
-
-# Rule 4: Line Buster Constraint
+ALL_POSITIONS_ORDERED = WORK_POSITIONS_PRIORITY_ORDER + ["Expo", "Break", "ToffTL"]
 LINE_BUSTER_ROLES = ["Line Buster 1", "Line Buster 2", "Line Buster 3"]
-
-# Rule 5 & 6: Paired Position Rotation
 PAIRED_POSITION_DEFINITIONS = {
     "Pair1": {"pos1": "Handout", "pos2": "Line Buster 1"},
     "Pair2": {"pos1": "Line Buster 2", "pos2": "Greeter"}
 }
-
-# Rule 7: Individual Position Duration (in 30-min blocks)
-# Note: Line Buster 3 is set to 1 block (30 mins) to align with Rule 4.
 INDIVIDUAL_POSITION_MAX_BLOCKS = {
-    "Conductor": 2, # 1 hour
-    "Drink Maker 1": 2, # 1 hour
-    "Drink Maker 2": 2, # 1 hour
-    "Line Buster 3": 1 # 30 mins
+    "Conductor": 2, "Drink Maker 1": 2, "Drink Maker 2": 2, "Line Buster 3": 1
 }
-
-# Consistent reference date for parsing time strings.
 REF_DATE_FOR_PARSING = datetime(1970, 1, 1).date()
 
-
 # ==============================================================================
-# HELPER FUNCTIONS
+# DATA PREPROCESSING (Helper Functions)
 # ==============================================================================
-
 def parse_time_input(time_val, ref_date):
-    """Parses various time string formats into a datetime object."""
-    if pd.isna(time_val) or str(time_val).strip().upper() in ['N/A', '']:
-        return pd.NaT
-    try:
-        return pd.to_datetime(f"{ref_date.strftime('%Y-%m-%d')} {str(time_val).strip()}")
-    except ValueError:
-        return pd.NaT
+    if pd.isna(time_val) or str(time_val).strip().upper() in ['N/A', '']: return pd.NaT
+    try: return pd.to_datetime(f"{ref_date.strftime('%Y-%m-%d')} {str(time_val).strip()}")
+    except ValueError: return pd.NaT
 
 def preprocess_employee_data_to_long_format(employee_data_list, ref_date):
-    """Converts employee shift data into a long format DataFrame for scheduling."""
-    # This function remains largely the same, as it correctly prepares the data.
-    all_employee_slots = []
+    all_slots = []
     for emp_data in employee_data_list:
-        name_str = emp_data.get('Name', '')
-        first_name, last_name_part = (name_str.split(" ", 1) + [""])[:2]
-        emp_name_fml = f"{first_name} {last_name_part[0] + '.' if last_name_part else ''}".strip()
+        name = f"{emp_data.get('Name', '').split(' ', 1)[0]} {emp_data.get('Name', '').split(' ', 1)[1][0] if ' ' in emp_data.get('Name', '') else ''}.".strip()
+        s_start = parse_time_input(emp_data.get('Shift Start'), ref_date)
+        s_end = parse_time_input(emp_data.get('Shift End'), ref_date)
+        b_start = parse_time_input(emp_data.get('Break'), ref_date)
+        b_end = b_start + pd.Timedelta(minutes=30) if pd.notna(b_start) else None
+        t_start = parse_time_input(emp_data.get('ToffTL Start'), ref_date)
+        t_end = parse_time_input(emp_data.get('ToffTL End'), ref_date)
+        
+        if pd.notna(s_start) and pd.notna(s_end):
+            curr = s_start
+            while curr < s_end:
+                on_break = pd.notna(b_start) and b_start <= curr < b_end
+                on_tofftl = pd.notna(t_start) and t_start <= curr < t_end
+                all_slots.append({'Time': curr.strftime('%I:%M %p').lstrip('0'), 'EmployeeNameFML': name, 'IsOnBreak': on_break, 'IsOnToffTL': on_tofftl})
+                curr += pd.Timedelta(minutes=30)
+    return pd.DataFrame(all_slots) if all_slots else pd.DataFrame()
 
-        shift_start_dt = parse_time_input(emp_data.get('Shift Start'), ref_date)
-        shift_end_dt = parse_time_input(emp_data.get('Shift End'), ref_date)
+# ==============================================================================
+# BACKTRACKING SOLVER
+# ==============================================================================
 
-        tofftl_s_dt = parse_time_input(emp_data.get('ToffTL Start'), ref_date)
-        tofftl_e_dt = parse_time_input(emp_data.get('ToffTL End'), ref_date)
-
-        break_start_dt = parse_time_input(emp_data.get('Break'), ref_date)
-        break_end_dt = break_start_dt + pd.Timedelta(minutes=30) if pd.notna(break_start_dt) else None
-
-        if pd.notna(shift_start_dt) and pd.notna(shift_end_dt):
-            current_time = shift_start_dt
-            while current_time < shift_end_dt:
-                position = "Available"
-                is_unpaid_break = "FALSE"
-                if pd.notna(tofftl_s_dt) and tofftl_s_dt <= current_time < tofftl_e_dt:
-                    position = "ToffTL"
-                if pd.notna(break_start_dt) and break_start_dt <= current_time < break_end_dt:
-                    is_unpaid_break = "TRUE"
-                
-                all_employee_slots.append({
-                    'Time': current_time.strftime('%I:%M %p').lstrip('0'),
-                    'EmployeeNameFML': emp_name_fml,
-                    'Position Scheduled As': position,
-                    'Unpaid Break': is_unpaid_break
-                })
-                current_time += pd.Timedelta(minutes=30)
+def is_assignment_valid(assignments, time_slot_obj, prev_states):
+    """Checks if a proposed set of assignments for a SINGLE time slot is valid."""
+    employee_states = prev_states.copy()
     
-    return pd.DataFrame(all_employee_slots) if all_employee_slots else pd.DataFrame()
-
-
-def find_eligible_employees(candidates, assigned_employees, state, rules):
-    """Filters a list of candidates based on general availability and rules."""
-    eligible = []
-    for emp in candidates:
-        if emp in assigned_employees:
-            continue
+    for pos, emp in assignments.items():
+        # Rule: No consecutive Line Buster roles
+        if pos in LINE_BUSTER_ROLES and employee_states.get(emp, {}).get('last_pos') in LINE_BUSTER_ROLES:
+            return False
         
-        # Rule 1: Shift boundaries (handled by preprocess function)
-        # Additional checks can be added here if needed.
+        # Rule: Conductor must start on the hour (unless continuing)
+        is_continuing_conductor = employee_states.get(emp, {}).get('last_pos') == 'Conductor'
+        if pos == 'Conductor' and not is_continuing_conductor and time_slot_obj.minute != 0:
+            return False
+            
+        # Rule: Individual position duration limits
+        if not is_continuing_conductor and employee_states.get(emp, {}).get('time_in_pos', 0) >= INDIVIDUAL_POSITION_MAX_BLOCKS.get(pos, 1):
+             return False
+
+    # This is a simplified check. More complex pair-rotation logic would be added here.
+    # For now, we focus on the core backtracking structure.
+    return True
+
+def solve_schedule_recursive(time_slot_index, time_slots, employee_info, schedule, employee_states):
+    """
+    The core recursive function that tries to solve the schedule.
+    It works on one time slot at a time and calls itself for the next one.
+    """
+    # Base Case: If we've successfully filled all time slots, we're done.
+    if time_slot_index >= len(time_slots):
+        return True, schedule
+
+    current_slot_str = time_slots[time_slot_index]
+    current_slot_obj = parse_time_input(current_slot_str, REF_DATE_FOR_PARSING)
+    
+    # Determine which employees are available for work
+    available_for_work = []
+    current_assignments = {p: "" for p in ALL_POSITIONS_ORDERED}
+    current_assignments["Break"] = []
+    current_assignments["ToffTL"] = []
+
+    for emp_details in employee_info[current_slot_str]:
+        emp_name = emp_details['name']
+        if emp_details['is_on_break']:
+            current_assignments["Break"].append(emp_name)
+        elif emp_details['is_on_tofftl']:
+            current_assignments["ToffTL"].append(emp_name)
+        else:
+            available_for_work.append(emp_name)
+    
+    num_positions_to_fill = len(available_for_work)
+    
+    # Rule: Positions must be filled in priority order.
+    positions_to_fill = WORK_POSITIONS_PRIORITY_ORDER[:num_positions_to_fill]
+
+    # Find all possible ways to assign available employees to the required positions
+    for p in permutations(available_for_work, num_positions_to_fill):
         
-        eligible.append(emp)
-    return eligible
+        # An assignment maps a position to an employee for this slot
+        tentative_assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
+        
+        # Check if this specific combination of assignments is valid according to the rules
+        if is_assignment_valid(tentative_assignments, current_slot_obj, employee_states):
+            
+            # If valid, apply this assignment and prepare state for the next recursion
+            new_states = employee_states.copy()
+            for pos, emp in tentative_assignments.items():
+                current_assignments[pos] = emp
+                
+                # Update employee state for the next time slot
+                time_in_pos = (new_states.get(emp, {}).get('time_in_pos', 0) + 1) if new_states.get(emp, {}).get('last_pos') == pos else 1
+                new_states[emp] = {'last_pos': pos, 'time_in_pos': time_in_pos}
+            
+            # Add the successful assignments to the schedule
+            schedule[time_slot_index] = {"Time": current_slot_str, **current_assignments}
+            
+            # --- RECURSIVE CALL ---
+            # Try to solve for the *next* time slot with the updated states.
+            is_solved, final_schedule = solve_schedule_recursive(
+                time_slot_index + 1, time_slots, employee_info, schedule, new_states
+            )
+            
+            # If the recursive call succeeded, it means we found a valid path. Pass the success up.
+            if is_solved:
+                return True, final_schedule
+
+            # --- BACKTRACK ---
+            # If the recursive call returned False, it means the `tentative_assignments`
+            # we chose led to a dead end. The loop will now continue to the next permutation.
+    
+    # If we've tried all permutations and none led to a solution, return False.
+    # This tells the previous function call that it made a bad choice.
+    return False, None
+
 
 # ==============================================================================
-# MAIN SCHEDULING LOGIC
+# MAIN ENTRY POINT
 # ==============================================================================
-
 def create_schedule(store_open_time_obj, store_close_time_obj, employee_data_list):
+    """
+    Main function to orchestrate the scheduling process.
+    """
     df_long = preprocess_employee_data_to_long_format(employee_data_list, REF_DATE_FOR_PARSING)
-    if df_long.empty:
-        return "No employee data to process."
-
-    time_slots_sorted = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
-    time_map = {ts: parse_time_input(ts, REF_DATE_FOR_PARSING) for ts in time_slots_sorted}
-
-    employee_info_by_timeslot = {t: [] for t in time_slots_sorted}
+    if df_long.empty: return "No employee data to process."
+    
+    time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
+    
+    employee_info = {t: [] for t in time_slots}
     for _, row in df_long.iterrows():
-        employee_info_by_timeslot[row['Time']].append({
+        employee_info[row['Time']].append({
             "name": row['EmployeeNameFML'],
-            "is_break_or_tofftl": str(row['Unpaid Break']).strip().upper() == 'TRUE' or str(row['Position Scheduled As']).strip() == 'ToffTL'
+            "is_on_break": row['IsOnBreak'],
+            "is_on_tofftl": row['IsOnToffTL']
         })
 
-    # --- State Tracking Variables ---
-    schedule_rows = []
-    # Tracks {emp_name: position_name}
-    employee_current_pos = {}
-    # Tracks {emp_name: num_blocks_in_pos}
-    employee_time_in_current_pos = {}
-    # Tracks the state of the paired rotations {pair_id: {emps: (e1, e2), blocks_done: 0/1}}
-    pair_state = {
-        "Pair1": {"emps": (None, None), "blocks_done": 0},
-        "Pair2": {"emps": (None, None), "blocks_done": 0}
-    }
-
-    # --- Main Loop: Iterate Through Each Time Slot ---
-    for time_slot in time_slots_sorted:
-        current_assignments = {p: "" for p in ALL_POSITIONS_ORDERED}
-        current_assignments["Break"] = []
-        current_assignments["ToffTL"] = []
-        
-        slot_time_obj = time_map[time_slot]
-        
-        active_emp_names = [e['name'] for e in employee_info_by_timeslot.get(time_slot, []) if not e['is_break_or_tofftl']]
-        
-        # Employees on break/tofftl are not available for work
-        for emp_details in employee_info_by_timeslot.get(time_slot, []):
-            if emp_details['is_break_or_tofftl']:
-                # Reset state for employees on break
-                employee_current_pos.pop(emp_details['name'], None)
-                employee_time_in_current_pos.pop(emp_details['name'], None)
-
-        assigned_this_slot = set()
-
-        # Reset pair state every hour on the hour
-        if slot_time_obj.minute == 0:
-            for pair_id in pair_state:
-                pair_state[pair_id] = {"emps": (None, None), "blocks_done": 0}
-
-        # --- Position Assignment Loop (Rule 3) ---
-        for pos in WORK_POSITIONS_PRIORITY_ORDER:
-            
-            # Find which pair this position belongs to, if any
-            current_pair_id = None
-            for pair_id, pair_def in PAIRED_POSITION_DEFINITIONS.items():
-                if pos in [pair_def["pos1"], pair_def["pos2"]]:
-                    current_pair_id = pair_id
-                    break
-
-            candidate = None
-            
-            # --- Rule 5 & 6: Paired Position Logic ---
-            if current_pair_id:
-                state = pair_state[current_pair_id]
-                pair_def = PAIRED_POSITION_DEFINITIONS[current_pair_id]
-
-                # If it's the second half-hour of the pair's rotation, swap them
-                if state["blocks_done"] == 1:
-                    emp1, emp2 = state["emps"]
-                    if pos == pair_def["pos1"] and emp2: candidate = emp2
-                    if pos == pair_def["pos2"] and emp1: candidate = emp1
-                
-                # If it's the start of a rotation, find two new people
-                elif state["blocks_done"] == 0 and not state["emps"][0]:
-                    available = [e for e in active_emp_names if e not in assigned_this_slot]
-                    if len(available) >= 2:
-                        emp1, emp2 = available[0], available[1]
-                        state["emps"] = (emp1, emp2)
-                        if pos == pair_def["pos1"]: candidate = emp1
-                        if pos == pair_def["pos2"]: candidate = emp2
-            
-            # --- Rule 2: Conductor Logic ---
-            elif pos == "Conductor":
-                # Must start on the hour and last for 1 hour
-                if slot_time_obj.minute == 0:
-                    # Is an employee already in the Conductor role?
-                    for emp, current_pos in employee_current_pos.items():
-                        if current_pos == "Conductor" and employee_time_in_current_pos.get(emp, 0) == 1:
-                            candidate = emp
-                            break
-                    if not candidate:
-                        available = [e for e in active_emp_names if e not in assigned_this_slot]
-                        if available: candidate = available[0]
-            
-            # --- Rule 7: Individual Positions (1-hour max) ---
-            else: # For Drink Makers, etc.
-                # Continue with the same person if they are under their max time
-                for emp, current_pos in employee_current_pos.items():
-                    if current_pos == pos and employee_time_in_current_pos.get(emp, 0) < INDIVIDUAL_POSITION_MAX_BLOCKS.get(pos, 1):
-                         candidate = emp
-                         break
-                if not candidate:
-                    available = [e for e in active_emp_names if e not in assigned_this_slot]
-                    # Rule 4: Prevent consecutive Line Buster assignments
-                    if pos in LINE_BUSTER_ROLES:
-                        available = [e for e in available if employee_current_pos.get(e) not in LINE_BUSTER_ROLES]
-                    
-                    if available: candidate = available[0]
-
-            # --- Assign Candidate and Update State ---
-            if candidate and candidate not in assigned_this_slot:
-                current_assignments[pos] = candidate
-                assigned_this_slot.add(candidate)
-
-                # Update state
-                if employee_current_pos.get(candidate) == pos:
-                    employee_time_in_current_pos[candidate] = employee_time_in_current_pos.get(candidate, 0) + 1
-                else: # New position for this employee
-                    employee_current_pos[candidate] = pos
-                    employee_time_in_current_pos[candidate] = 1
-
-        # --- Update Pair State after assignments are made ---
-        for pair_id, state in pair_state.items():
-            if state["emps"][0] and state["emps"][1]:
-                state["blocks_done"] += 1
-
-        schedule_rows.append({"Time": time_slot, **current_assignments})
-
-    # --- Final Formatting ---
-    if not schedule_rows: return "No schedule data could be generated."
+    # Initialize empty schedule and states, then start the recursive solver.
+    initial_schedule = [{} for _ in time_slots]
+    initial_states = {}
     
-    out_df = pd.DataFrame(schedule_rows, columns=["Time"] + ALL_POSITIONS_ORDERED)
+    is_solved, final_schedule_rows = solve_schedule_recursive(0, time_slots, employee_info, initial_schedule, initial_states)
+    
+    if not is_solved:
+        return "Could not find a valid schedule that meets all constraints."
+
+    # Format the final schedule for output
+    out_df = pd.DataFrame(final_schedule_rows, columns=["Time"] + ALL_POSITIONS_ORDERED)
+    out_df.fillna("", inplace=True)
+    for col in ["Break", "ToffTL"]:
+        if col in out_df.columns:
+            out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(x)) if isinstance(x, list) else x)
+            
     final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
     return final_df.to_csv(index=False)
