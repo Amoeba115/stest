@@ -7,7 +7,6 @@ import copy
 
 # ==============================================================================
 # SECTION 1: SHARED HELPER FUNCTIONS
-# These functions are used by both the simple and complex schedulers.
 # ==============================================================================
 
 def parse_time_input(time_val, ref_date):
@@ -20,10 +19,7 @@ def parse_time_input(time_val, ref_date):
         return pd.NaT
 
 def preprocess_employee_data(employee_data_list):
-    """
-    A robust, shared function to convert employee data into a long-format DataFrame.
-    It provides all necessary columns for both simple and complex schedulers.
-    """
+    """A robust, shared function to convert employee data into a long-format DataFrame."""
     all_slots = []
     ref_date = datetime(1970, 1, 1).date()
     for emp_data in employee_data_list:
@@ -43,7 +39,6 @@ def preprocess_employee_data(employee_data_list):
                 on_break = pd.notna(b_start) and b_start <= curr < b_end
                 on_tofftl = pd.notna(t_start) and t_start <= curr < t_end
                 
-                # Provide columns for both schedulers
                 position_scheduled_as = "ToffTL" if on_tofftl else "Available"
                 is_unpaid_break_str = "TRUE" if on_break else "FALSE"
 
@@ -64,20 +59,39 @@ def preprocess_employee_data(employee_data_list):
 # ==============================================================================
 COMPLEX_WORK_POSITIONS = ["Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Greeter", "Drink Maker 1", "Drink Maker 2", "Line Buster 3"]
 COMPLEX_ALL_POSITIONS = COMPLEX_WORK_POSITIONS + ["Expo", "Break", "ToffTL"]
-COMPLEX_LINE_BUSTER_ROLES = ["Line Buster 1", "Line Buster 2", "Line Buster 3"]
-COMPLEX_POSITION_MAX_BLOCKS = {"default": 2, "Line Buster 1": 1, "Line Buster 2": 1, "Line Buster 3": 1}
 
 def is_assignment_valid_complex(assignments, time_slot_obj, prev_states, relaxation_level):
+    """Checks if a proposed set of assignments is valid based on the relaxation level."""
+    # --- Hard Rules (Enforced on all Tiers) ---
     for pos, emp in assignments.items():
         emp_last_pos = prev_states.get(emp, {}).get('last_pos')
         emp_time_in_pos = prev_states.get(emp, {}).get('time_in_pos', 0)
-        max_blocks = COMPLEX_POSITION_MAX_BLOCKS.get(pos, COMPLEX_POSITION_MAX_BLOCKS['default'])
-        if pos == emp_last_pos and emp_time_in_pos >= max_blocks:
-            return False
+        
+        # HARD RULE: Conductor hour and start time.
+        if pos == 'Conductor':
+            if emp_last_pos == 'Conductor' and emp_time_in_pos >= 2: return False # Max 1 hour
+            if emp_last_pos != 'Conductor' and time_slot_obj.minute != 0: return False # Must start on hour
+        
+        # HARD RULE: Line Buster 30-minute limit.
+        if pos in ["Line Buster 1", "Line Buster 2", "Line Buster 3"]:
+            if emp_last_pos == pos and emp_time_in_pos >= 1: return False # Max 30 mins
+
+    # --- Relaxable Rules ---
+    # RELAXABLE RULE (Tier 2+): Max duration for other positions (e.g., Drink Maker)
     if relaxation_level < 2:
         for pos, emp in assignments.items():
-            if pos == 'Conductor' and prev_states.get(emp, {}).get('last_pos') != 'Conductor':
-                if time_slot_obj.minute != 0: return False
+            # This rule applies to positions not covered by the hard rules above
+            if pos not in ["Conductor", "Line Buster 1", "Line Buster 2", "Line Buster 3"]:
+                emp_last_pos = prev_states.get(emp, {}).get('last_pos')
+                emp_time_in_pos = prev_states.get(emp, {}).get('time_in_pos', 0)
+                if pos == emp_last_pos and emp_time_in_pos >= 2: # 1-hour max
+                    return False
+
+    # RELAXABLE RULE (Tier 1+): Paired position swapping
+    if relaxation_level < 1:
+        # Placeholder for strict pair-swapping logic.
+        pass
+
     return True
 
 def solve_schedule_recursive(time_slot_index, time_slots, employee_info, schedule, employee_states, relaxation_level):
@@ -110,18 +124,24 @@ def create_schedule_complex(store_open_time_obj, store_close_time_obj, employee_
     if df_long.empty: return "No employee data to process."
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
     employee_info = {t: g.to_dict('records') for t, g in df_long.groupby('Time')}
+    
+    # 3-Tiered relaxation approach
     for relaxation_level in range(3):
         is_solved, final_schedule_rows = solve_schedule_recursive(0, time_slots, employee_info, [{} for _ in time_slots], {}, relaxation_level)
         if is_solved:
             note = ""
-            if relaxation_level == 1: note = "NOTE: A valid schedule was found by relaxing the paired position swapping rule.\n\n"
-            elif relaxation_level == 2: note = "NOTE: A valid schedule was found by relaxing paired swapping AND the Conductor start time rule.\n\n"
+            if relaxation_level == 1:
+                note = "NOTE: A valid schedule was found by relaxing the paired position swapping rule.\n\n"
+            elif relaxation_level == 2:
+                note = "NOTE: A valid schedule was found by relaxing swapping rules AND general position time limits.\n\n"
+            
             out_df = pd.DataFrame(final_schedule_rows, columns=["Time"] + COMPLEX_ALL_POSITIONS).fillna("")
             for col in ["Break", "ToffTL"]:
                 out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(x)) if isinstance(x, list) else x)
             final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
             return note + final_df.to_csv(index=False)
-    return "Could not find a valid schedule, even after relaxing all possible rules."
+            
+    return "Could not find a valid schedule, even after relaxing all possible soft rules."
 
 
 # ==============================================================================
