@@ -55,93 +55,106 @@ def preprocess_employee_data(employee_data_list):
 
 
 # ==============================================================================
-# SECTION 2: COMPLEX (BACKTRACKING) SCHEDULER
+# SECTION 2: REWRITTEN "COMPLEX" (TIERED GREEDY) SCHEDULER
 # ==============================================================================
-COMPLEX_WORK_POSITIONS = ["Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Greeter", "Drink Maker 1", "Drink Maker 2", "Line Buster 3"]
-COMPLEX_ALL_POSITIONS = COMPLEX_WORK_POSITIONS + ["Expo", "Break", "ToffTL"]
-
-def is_assignment_valid_complex(assignments, time_slot_obj, prev_states, relaxation_level):
-    """Checks if a proposed set of assignments is valid based on the relaxation level."""
-    # --- Hard Rules (Enforced on all Tiers) ---
-    for pos, emp in assignments.items():
-        emp_last_pos = prev_states.get(emp, {}).get('last_pos')
-        emp_time_in_pos = prev_states.get(emp, {}).get('time_in_pos', 0)
-        
-        # HARD RULE: Conductor hour and start time.
-        if pos == 'Conductor':
-            if emp_last_pos == 'Conductor' and emp_time_in_pos >= 2: return False # Max 1 hour
-            if emp_last_pos != 'Conductor' and time_slot_obj.minute != 0: return False # Must start on hour
-        
-        # HARD RULE: Line Buster 30-minute limit.
-        if pos in ["Line Buster 1", "Line Buster 2", "Line Buster 3"]:
-            if emp_last_pos == pos and emp_time_in_pos >= 1: return False # Max 30 mins
-
-    # --- Relaxable Rules ---
-    # RELAXABLE RULE (Tier 2+): Max duration for other positions (e.g., Drink Maker)
-    if relaxation_level < 2:
-        for pos, emp in assignments.items():
-            # This rule applies to positions not covered by the hard rules above
-            if pos not in ["Conductor", "Line Buster 1", "Line Buster 2", "Line Buster 3"]:
-                emp_last_pos = prev_states.get(emp, {}).get('last_pos')
-                emp_time_in_pos = prev_states.get(emp, {}).get('time_in_pos', 0)
-                if pos == emp_last_pos and emp_time_in_pos >= 2: # 1-hour max
-                    return False
-
-    # RELAXABLE RULE (Tier 1+): Paired position swapping
-    if relaxation_level < 1:
-        # Placeholder for strict pair-swapping logic.
-        pass
-
-    return True
-
-def solve_schedule_recursive(time_slot_index, time_slots, employee_info, schedule, employee_states, relaxation_level):
-    if time_slot_index >= len(time_slots): return True, schedule
-    current_slot_str = time_slots[time_slot_index]
-    current_slot_obj = parse_time_input(current_slot_str, datetime(1970, 1, 1).date())
-    available_for_work, current_assignments = [], {"Break": [], "ToffTL": []}
-    for emp_details in employee_info[current_slot_str]:
-        if emp_details['IsOnBreak']: current_assignments["Break"].append(emp_details['EmployeeNameFML'])
-        elif emp_details['IsOnToffTL']: current_assignments["ToffTL"].append(emp_details['EmployeeNameFML'])
-        else: available_for_work.append(emp_details['EmployeeNameFML'])
-    num_positions_to_fill = len(available_for_work)
-    positions_to_fill = COMPLEX_WORK_POSITIONS[:num_positions_to_fill]
-    if len(positions_to_fill) != len(available_for_work): return False, None
-    for p in permutations(available_for_work):
-        tentative_assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
-        if is_assignment_valid_complex(tentative_assignments, current_slot_obj, employee_states, relaxation_level):
-            new_states = copy.deepcopy(employee_states)
-            final_assignments = {**current_assignments, **tentative_assignments}
-            for pos, emp in tentative_assignments.items():
-                time_in_pos = (new_states.get(emp, {}).get('time_in_pos', 0) + 1) if new_states.get(emp, {}).get('last_pos') == pos else 1
-                new_states[emp] = {'last_pos': pos, 'time_in_pos': time_in_pos}
-            schedule[time_slot_index] = {"Time": current_slot_str, **final_assignments}
-            is_solved, final_schedule = solve_schedule_recursive(time_slot_index + 1, time_slots, employee_info, schedule, new_states, relaxation_level)
-            if is_solved: return True, final_schedule
-    return False, None
+COMPLEX_WORK_POSITIONS = ["Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Expo", "Drink Maker 1", "Drink Maker 2", "Line Buster 3"]
+COMPLEX_ALL_POSITIONS = COMPLEX_WORK_POSITIONS + ["Break", "ToffTL"]
+COMPLEX_LINE_BUSTER_ROLES = ["Line Buster 1", "Line Buster 2", "Line Buster 3"]
 
 def create_schedule_complex(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
+
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
     employee_info = {t: g.to_dict('records') for t, g in df_long.groupby('Time')}
-    
-    # 3-Tiered relaxation approach
-    for relaxation_level in range(3):
-        is_solved, final_schedule_rows = solve_schedule_recursive(0, time_slots, employee_info, [{} for _ in time_slots], {}, relaxation_level)
-        if is_solved:
-            note = ""
-            if relaxation_level == 1:
-                note = "NOTE: A valid schedule was found by relaxing the paired position swapping rule.\n\n"
-            elif relaxation_level == 2:
-                note = "NOTE: A valid schedule was found by relaxing swapping rules AND general position time limits.\n\n"
+
+    # State tracking for employees
+    employee_states = {} # {emp: {'last_pos': str, 'time_in_pos': int, 'history': list}}
+
+    schedule_rows = []
+
+    for time_slot_str in time_slots:
+        current_assignments = {p: "" for p in COMPLEX_ALL_POSITIONS}
+        current_assignments["Break"] = []
+        current_assignments["ToffTL"] = []
+        
+        time_slot_obj = parse_time_input(time_slot_str, datetime(1970,1,1).date())
+
+        # --- Step 1: Handle Breaks/ToffTL (Hard Rule) ---
+        available_for_work = []
+        for emp_details in employee_info[time_slot_str]:
+            emp_name = emp_details['EmployeeNameFML']
+            if emp_details['IsOnBreak']:
+                current_assignments["Break"].append(emp_name)
+                employee_states[emp_name] = {'last_pos': 'Break', 'time_in_pos': 1, 'history': []}
+            elif emp_details['IsOnToffTL']:
+                current_assignments["ToffTL"].append(emp_name)
+                # Don't reset state for ToffTL to track duration
+                if employee_states.get(emp_name, {}).get('last_pos') == 'ToffTL':
+                    employee_states[emp_name]['time_in_pos'] += 1
+                else:
+                    employee_states[emp_name] = {'last_pos': 'ToffTL', 'time_in_pos': 1, 'history': []}
+            else:
+                available_for_work.append(emp_name)
+        
+        # --- Step 2: Assign available workers to positions based on priority ---
+        assigned_this_slot = set()
+        for pos in COMPLEX_WORK_POSITIONS:
             
-            out_df = pd.DataFrame(final_schedule_rows, columns=["Time"] + COMPLEX_ALL_POSITIONS).fillna("")
-            for col in ["Break", "ToffTL"]:
-                out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(x)) if isinstance(x, list) else x)
-            final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
-            return note + final_df.to_csv(index=False)
+            # --- Candidate Selection ---
+            best_candidate = None
+            best_candidate_score = -1
+
+            eligible_candidates = [e for e in available_for_work if e not in assigned_this_slot]
+
+            for emp in eligible_candidates:
+                state = employee_states.get(emp, {})
+                last_pos = state.get('last_pos')
+                time_in_pos = state.get('time_in_pos', 0)
+                
+                # --- Hard Rule Checks ---
+                if pos in COMPLEX_LINE_BUSTER_ROLES and time_in_pos >= 1 and last_pos == pos: continue
+                if pos not in COMPLEX_LINE_BUSTER_ROLES and time_in_pos >= 2 and last_pos == pos: continue
+
+                # --- Scoring based on priority rules ---
+                score = 10 # Base score for being eligible
+                
+                # Second-Priority Rules
+                if pos == 'Conductor':
+                    if last_pos == 'Conductor' and time_in_pos == 1: score += 50 # High score for continuing Conductor
+                    elif time_slot_obj.minute == 0: score += 20 # Good score for starting on the hour
+                
+                # Third-Priority Rules (lower score boosts)
+                # Simplified check to avoid direct back-and-forth
+                if len(state.get('history', [])) > 1 and state['history'][-2] == pos:
+                    score -= 5 # Penalize for ABAB pattern
+
+                if score > best_candidate_score:
+                    best_candidate = emp
+                    best_candidate_score = score
             
-    return "Could not find a valid schedule, even after relaxing all possible soft rules."
+            if best_candidate:
+                current_assignments[pos] = best_candidate
+                assigned_this_slot.add(best_candidate)
+
+                # Update state for the chosen employee
+                state = employee_states.get(best_candidate, {})
+                if state.get('last_pos') == pos:
+                    state['time_in_pos'] += 1
+                else:
+                    state['time_in_pos'] = 1
+                state['last_pos'] = pos
+                state.setdefault('history', []).append(pos)
+                employee_states[best_candidate] = state
+        
+        schedule_rows.append({"Time": time_slot_str, **current_assignments})
+
+    # --- Final Formatting ---
+    out_df = pd.DataFrame(schedule_rows, columns=["Time"] + COMPLEX_ALL_POSITIONS).fillna("")
+    out_df["Break"] = out_df["Break"].apply(lambda x: ", ".join(sorted(x)) if isinstance(x, list) else x)
+    out_df["ToffTL"] = out_df["ToffTL"].apply(lambda x: ", ".join(sorted(x)) if isinstance(x, list) else x)
+    final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
+    return final_df.to_csv(index=False)
 
 
 # ==============================================================================
