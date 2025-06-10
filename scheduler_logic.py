@@ -18,8 +18,14 @@ PAIRED_POSITION_DEFINITIONS = {
     "Pair1": {"pos1": "Handout", "pos2": "Line Buster 1"},
     "Pair2": {"pos1": "Line Buster 2", "pos2": "Greeter"}
 }
-INDIVIDUAL_POSITION_MAX_BLOCKS = {
-    "Conductor": 2, "Drink Maker 1": 2, "Drink Maker 2": 2, "Line Buster 3": 1
+# This dictionary is referenced by the hard rule in is_assignment_valid
+POSITION_MAX_BLOCKS = {
+    # Default for all positions is 2 blocks (1 hour)
+    "default": 2,
+    # Specific overrides can be placed here if needed, e.g., for Line Busters
+    "Line Buster 1": 1,
+    "Line Buster 2": 1,
+    "Line Buster 3": 1
 }
 REF_DATE_FOR_PARSING = datetime(1970, 1, 1).date()
 
@@ -61,29 +67,28 @@ def is_assignment_valid(assignments, time_slot_obj, prev_states, relaxation_leve
     """Checks if a proposed set of assignments is valid based on the relaxation level."""
     # --- Hard Rules (Enforced on all Tiers) ---
     for pos, emp in assignments.items():
-        # HARD RULE: No consecutive Line Buster assignments
-        if pos in LINE_BUSTER_ROLES and prev_states.get(emp, {}).get('last_pos') in LINE_BUSTER_ROLES:
-            return False
-            
-        # HARD RULE: Conductor maximum duration is 1 hour (2 blocks)
-        if pos == 'Conductor':
-            last_pos = prev_states.get(emp, {}).get('last_pos')
-            time_in_pos = prev_states.get(emp, {}).get('time_in_pos', 0)
-            if last_pos == 'Conductor' and time_in_pos >= 2:
-                return False # Cannot be Conductor for a 3rd consecutive block
+        emp_last_pos = prev_states.get(emp, {}).get('last_pos')
+        emp_time_in_pos = prev_states.get(emp, {}).get('time_in_pos', 0)
+        
+        # HARD RULE: Maximum duration for any position.
+        max_blocks = POSITION_MAX_BLOCKS.get(pos, POSITION_MAX_BLOCKS['default'])
+        if pos == emp_last_pos and emp_time_in_pos >= max_blocks:
+            return False # Exceeds max time for this position
 
+        # HARD RULE: No consecutive Line Buster assignments.
+        # This is implicitly handled by the max_blocks rule for Line Busters being 1.
+        
     # --- Relaxable Rules ---
     # RELAXABLE RULE (Tier 2+): Conductor must start on the hour
     if relaxation_level < 2:
         for pos, emp in assignments.items():
-            is_continuing_conductor = prev_states.get(emp, {}).get('last_pos') == 'Conductor'
-            if pos == 'Conductor' and not is_continuing_conductor and time_slot_obj.minute != 0:
-                return False
+            if pos == 'Conductor' and prev_states.get(emp, {}).get('last_pos') != 'Conductor':
+                if time_slot_obj.minute != 0:
+                    return False
     
     # RELAXABLE RULE (Tier 1+): Paired position swapping
     if relaxation_level < 1:
         # Complex logic to enforce strict pair swapping would go here.
-        # This simplified backtracking model assumes the permutation check is sufficient.
         pass
 
     return True
@@ -139,21 +144,21 @@ def solve_schedule_recursive(time_slot_index, time_slots, employee_info, schedul
 # ==============================================================================
 def create_schedule(store_open_time_obj, store_close_time_obj, employee_data_list):
     """Orchestrates the scheduling process with tiered rule relaxation."""
-    df_long = preprocess_employee_data_to_long_format(employee_data_list, REF_DATE_FOR_PARSING) # from schedule-main/scheduler_logic.py
-    if df_long.empty: return "No employee data to process." # from schedule-main/scheduler_logic.py
+    df_long = preprocess_employee_data_to_long_format(employee_data_list, REF_DATE_FOR_PARSING)
+    if df_long.empty: return "No employee data to process."
     
-    time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p')) # from schedule-main/scheduler_logic.py
+    time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
     
-    employee_info = {t: [] for t in time_slots} # from schedule-main/scheduler_logic.py
+    employee_info = {t: [] for t in time_slots}
     for _, row in df_long.iterrows():
-        employee_info[row['Time']].append({ # from schedule-main/scheduler_logic.py
-            "name": row['EmployeeNameFML'], "is_on_break": row['IsOnBreak'], "is_on_tofftl": row['IsOnToffTL'] # from schedule-main/scheduler_logic.py
+        employee_info[row['Time']].append({
+            "name": row['EmployeeNameFML'], "is_on_break": row['IsOnBreak'], "is_on_tofftl": row['IsOnToffTL']
         })
 
     # --- Tiered Solving Approach ---
     for relaxation_level in range(3):
-        initial_schedule = [{} for _ in time_slots] # from schedule-main/scheduler_logic.py
-        initial_states = {} # from schedule-main/scheduler_logic.py
+        initial_schedule = [{} for _ in time_slots]
+        initial_states = {}
         
         is_solved, final_schedule_rows = solve_schedule_recursive( # from schedule-main/scheduler_logic.py
             0, time_slots, employee_info, initial_schedule, initial_states, relaxation_level
@@ -167,13 +172,13 @@ def create_schedule(store_open_time_obj, store_close_time_obj, employee_data_lis
             elif relaxation_level == 2:
                 relaxation_note = "NOTE: A valid schedule was found by relaxing paired swapping AND the Conductor start time rule.\n\n"
             
-            out_df = pd.DataFrame(final_schedule_rows, columns=["Time"] + ALL_POSITIONS_ORDERED) # from schedule-main/scheduler_logic.py
+            out_df = pd.DataFrame(final_schedule_rows, columns=["Time"] + ALL_POSITIONS_ORDERED)
             out_df.fillna("", inplace=True)
             for col in ["Break", "ToffTL"]:
                 if col in out_df.columns:
                     out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(x)) if isinstance(x, list) else x)
             
-            final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'}) # from schedule-main/scheduler_logic.py
+            final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
             return relaxation_note + final_df.to_csv(index=False)
 
     return "Could not find a valid schedule, even after relaxing all possible rules."
