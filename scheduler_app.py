@@ -36,7 +36,7 @@ st.sidebar.markdown('<h1 style="color: #f03c4c; font-size: 24px;">Configuration<
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
-    ('Complex (Rule-Based)', 'Simple (Greedy)'),
+    ('Complex (Rule-Based)', 'Simple (v1)'),
     help="Complex logic uses backtracking to meet all rules. Simple logic is faster and uses a basic assignment strategy."
 )
 
