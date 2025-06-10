@@ -3,8 +3,8 @@ import streamlit as st
 import pandas as pd
 from datetime import time, datetime
 from io import StringIO
-# Import both scheduling functions
-from scheduler_logic import create_schedule_complex, create_schedule_simple
+# Import all necessary functions from the logic file
+from scheduler_logic import create_schedule_complex, create_schedule_simple, parse_time_input
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Employee Scheduler", layout="wide")
@@ -32,7 +32,7 @@ REF_DATE_FOR_PARSING = datetime(1970, 1, 1).date()
 # --- Input Sections in Sidebar ---
 st.sidebar.markdown('<h1 style="color: #f03c4c; font-size: 24px;">Configuration</h1>', unsafe_allow_html=True)
 
-# --- NEW: Algorithm Selector ---
+# Algorithm Selector
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
@@ -85,7 +85,7 @@ if st.sidebar.button("Generate Schedule"):
         
         with st.spinner(f"Generating schedule with {algorithm_choice.split(' ')[0]} logic..."):
             try:
-                # --- Call the chosen scheduling function ---
+                # Call the chosen scheduling function
                 if algorithm_choice == 'Complex (Rule-Based)':
                     schedule_output = create_schedule_complex(store_open_time_obj, store_close_time_obj, employee_data_list)
                 else: # 'Simple (Greedy)'
