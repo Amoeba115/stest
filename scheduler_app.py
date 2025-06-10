@@ -19,8 +19,8 @@ st.sidebar.header("Configuration")
 
 # Store Hours
 st.sidebar.subheader("Store Hours")
-store_open_time_str = st.sidebar.text_input("Store Open Time (e.g., 08:00 AM)", "8:00 AM")
-store_close_time_str = st.sidebar.text_input("Store Close Time (e.g., 11:00 PM)", "11:00 PM")
+store_open_time_str = st.sidebar.text_input("Store Open Time (e.g., 08:00 AM)", "7:30 AM")
+store_close_time_str = st.sidebar.text_input("Store Close Time (e.g., 11:00 PM)", "10:00 PM")
 
 # Parse store times early for validation
 store_open_dt = parse_time_input(store_open_time_str, REF_DATE_FOR_PARSING)
@@ -34,9 +34,9 @@ employee_data_list = []
 for i in range(num_employees):
     st.sidebar.markdown(f"--- **Employee {i+1}** ---")
     emp_name = st.sidebar.text_input(f"Name (Employee {i+1})", key=f"name_{i}")
-    shift_start_str = st.sidebar.text_input(f"Shift Start (Employee {i+1})", "9:00 AM", key=f"s_start_{i}")
-    shift_end_str = st.sidebar.text_input(f"Shift End (Employee {i+1})", "5:00 PM", key=f"s_end_{i}")
-    break_start_str = st.sidebar.text_input(f"Break Start (Employee {i+1})", "1:00 PM", key=f"break_{i}")
+    shift_start_str = st.sidebar.text_input(f"Shift Start (Employee {i+1})", " ", key=f"s_start_{i}")
+    shift_end_str = st.sidebar.text_input(f"Shift End (Employee {i+1})", " ", key=f"s_end_{i}")
+    break_start_str = st.sidebar.text_input(f"Break Start (Employee {i+1})", " ", key=f"break_{i}")
 
     # --- Real-time validation for employee shift times ---
     shift_start_dt = parse_time_input(shift_start_str, REF_DATE_FOR_PARSING)
