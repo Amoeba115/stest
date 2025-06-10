@@ -32,7 +32,7 @@ st.markdown("""
 
 # --- Page Title ---
 st.markdown('<h1 style="color: #f03c4c;">Employee Schedule Generator</h1>', unsafe_allow_html=True)
-st.write("Fill in the store hours and employee details in the sidebar to generate the schedule. This generator uses the rules for Swig daily schedules as a guideline.") # from schedule-main/scheduler_app.py
+st.write("Fill in the store hours and employee details in the sidebar to generate the schedule. This generator was built for use at Swig restaurants.") # from schedule-main/scheduler_app.py
 
 # --- Consistent Reference Date for Time Parsing ---
 REF_DATE_FOR_PARSING = datetime(1970, 1, 1).date() # from schedule-main/scheduler_app.py
