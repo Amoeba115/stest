@@ -42,8 +42,8 @@ st.sidebar.markdown('<h1 style="color: #f03c4c; font-size: 24px;">Configuration<
 
 # Store Hours
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Store Hours</h3>', unsafe_allow_html=True)
-store_open_time_str = st.sidebar.text_input("Store Open Time (e.g., 08:00 AM)", "8:00 AM") # from schedule-main/scheduler_app.py
-store_close_time_str = st.sidebar.text_input("Store Close Time (e.g., 11:00 PM)", "11:00 PM") # from schedule-main/scheduler_app.py
+store_open_time_str = st.sidebar.text_input("Store Open Time (e.g., 08:00 AM)", "7:30 AM") # from schedule-main/scheduler_app.py
+store_close_time_str = st.sidebar.text_input("Store Close Time (e.g., 11:00 PM)", "10:00 PM") # from schedule-main/scheduler_app.py
 
 # Parse store times early for validation
 store_open_dt = parse_time_input(store_open_time_str, REF_DATE_FOR_PARSING) # from schedule-main/scheduler_app.py
@@ -57,9 +57,9 @@ employee_data_list = [] # from schedule-main/scheduler_app.py
 for i in range(num_employees): # from schedule-main/scheduler_app.py
     st.sidebar.markdown(f"--- **Employee {i+1}** ---") # from schedule-main/scheduler_app.py
     emp_name = st.sidebar.text_input(f"Name (Employee {i+1})", key=f"name_{i}") # from schedule-main/scheduler_app.py
-    shift_start_str = st.sidebar.text_input(f"Shift Start (Employee {i+1})", "9:00 AM", key=f"s_start_{i}") # from schedule-main/scheduler_app.py
-    shift_end_str = st.sidebar.text_input(f"Shift End (Employee {i+1})", "5:00 PM", key=f"s_end_{i}") # from schedule-main/scheduler_app.py
-    break_start_str = st.sidebar.text_input(f"Break Start (Employee {i+1})", "1:00 PM", key=f"break_{i}") # from schedule-main/scheduler_app.py
+    shift_start_str = st.sidebar.text_input(f"Shift Start (Employee {i+1})", " ", key=f"s_start_{i}") # from schedule-main/scheduler_app.py
+    shift_end_str = st.sidebar.text_input(f"Shift End (Employee {i+1})", " ", key=f"s_end_{i}") # from schedule-main/scheduler_app.py
+    break_start_str = st.sidebar.text_input(f"Break Start (Employee {i+1})", " ", key=f"break_{i}") # from schedule-main/scheduler_app.py
 
     # --- Real-time validation for employee shift times ---
     shift_start_dt = parse_time_input(shift_start_str, REF_DATE_FOR_PARSING) # from schedule-main/scheduler_app.py
