@@ -3,7 +3,7 @@ import pandas as pd
 from io import StringIO
 from datetime import datetime, time
 import copy
-from itertools import permutations, cycle
+from itertools import permutations
 
 # ==============================================================================
 # SECTION 1: SHARED CONFIGURATION AND HELPERS
@@ -40,7 +40,7 @@ def preprocess_employee_data(employee_data_list):
     return pd.DataFrame(all_slots) if all_slots else pd.DataFrame()
 
 # ==============================================================================
-# SECTION 2: CYCLICAL SCHEDULER (NEW)
+# SECTION 2: CYCLICAL SCHEDULER (NEWLY REFINED)
 # ==============================================================================
 def create_schedule_cyclical(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
@@ -55,27 +55,40 @@ def create_schedule_cyclical(store_open_time_obj, store_close_time_obj, employee
             if row['IsOnBreak']: schedule[slot_str]['Break'].append(row['EmployeeNameFML'])
             if row['IsOnToffTL']: schedule[slot_str]['ToffTL'].append(row['EmployeeNameFML'])
         
-        # If this slot's Conductor position is already filled by the previous slot, honor it
-        if schedule[slot_str]['Conductor'] != "":
-            continue
-
-        available_emps = availability.get(slot_str, [])
-        if not available_emps: continue
-
-        emp_cycler = cycle(available_emps)
+        # Carry over Conductor from previous slot if applicable
+        if i > 0:
+            prev_slot_str = time_slots[i-1]
+            prev_conductor = schedule[prev_slot_str]['Conductor']
+            # If previous slot had a new conductor, they continue for this slot
+            if prev_conductor and schedule[slot_str]['Conductor'] == "" and \
+               prev_conductor in availability.get(slot_str, []):
+                # Check if it was a new assignment, not a continuation itself
+                if i < 2 or (i >= 2 and schedule[time_slots[i-2]]['Conductor'] != prev_conductor):
+                     schedule[slot_str]['Conductor'] = prev_conductor
         
+        # Get employees available for new assignments in this slot
+        assigned_in_slot = {val for val in schedule[slot_str].values() if isinstance(val, str) and val}
+        available_and_unassigned = [emp for emp in availability.get(slot_str, []) if emp not in assigned_in_slot]
+        
+        if not available_and_unassigned:
+            continue
+        
+        # Assign available employees to open positions one-to-one
+        emp_idx_to_assign = 0
         for pos in WORK_POSITIONS:
-            # Find the next available person for this position
-            assigned_emp = next(emp_cycler)
-            
-            # If the current assignment is Conductor, try to book them for the next slot too
-            if pos == 'Conductor' and i + 1 < len(time_slots):
-                next_slot_str = time_slots[i+1]
-                # Check if the employee is available and the spot is free in the next slot
-                if assigned_emp in availability.get(next_slot_str, []) and schedule[next_slot_str]['Conductor'] == "":
-                    schedule[next_slot_str]['Conductor'] = assigned_emp
+            if emp_idx_to_assign >= len(available_and_unassigned):
+                break # Stop assigning when we run out of available people
 
-            schedule[slot_str][pos] = assigned_emp
+            if schedule[slot_str][pos] == "": # If position is open
+                assigned_emp = available_and_unassigned[emp_idx_to_assign]
+                schedule[slot_str][pos] = assigned_emp
+                emp_idx_to_assign += 1 # Move to the next person
+
+                # If we just assigned a new Conductor, book them for the next slot
+                if pos == 'Conductor' and i + 1 < len(time_slots):
+                    next_slot_str = time_slots[i+1]
+                    if assigned_emp in availability.get(next_slot_str, []) and schedule[next_slot_str]['Conductor'] == "":
+                        schedule[next_slot_str]['Conductor'] = assigned_emp
     
     schedule_rows = [{"Time": time, **positions} for time, positions in schedule.items()]
     out_df = pd.DataFrame(schedule_rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).fillna("")
