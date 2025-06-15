@@ -40,7 +40,7 @@ def preprocess_employee_data(employee_data_list):
     return pd.DataFrame(all_slots) if all_slots else pd.DataFrame()
 
 # ==============================================================================
-# SECTION 2: ROTATIONAL SCHEDULER (CORRECTED)
+# SECTION 2: ROTATIONAL SCHEDULER (HYBRID LOGIC)
 # ==============================================================================
 def create_schedule_rotational(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
@@ -53,10 +53,8 @@ def create_schedule_rotational(store_open_time_obj, store_close_time_obj, employ
     for i, slot_str in enumerate(time_slots):
         # Handle Breaks and ToffTL
         for _, row in df_long[df_long['Time'] == slot_str].iterrows():
-            if row['IsOnBreak']:
-                schedule[slot_str]['Break'].append(row['EmployeeNameFML'])
-            if row['IsOnToffTL']:
-                schedule[slot_str]['ToffTL'].append(row['EmployeeNameFML'])
+            if row['IsOnBreak']: schedule[slot_str]['Break'].append(row['EmployeeNameFML'])
+            if row['IsOnToffTL']: schedule[slot_str]['ToffTL'].append(row['EmployeeNameFML'])
         
         # Carry over Conductor from previous slot
         if i > 0:
@@ -70,40 +68,43 @@ def create_schedule_rotational(store_open_time_obj, store_close_time_obj, employ
         available_and_unassigned = [emp for emp in availability.get(slot_str, []) if emp not in assigned_in_slot]
 
         # Loop through positions and assign available people one-to-one
-        for pos in WORK_POSITIONS:
-            if not available_and_unassigned: break # Stop when out of people
-            if schedule[slot_str][pos]: continue # Skip if already filled
+        for pos_idx, pos in enumerate(WORK_POSITIONS):
+            if not available_and_unassigned: break
+            if schedule[slot_str][pos]: continue
 
-            # Find the best person for this position (ideally one rotating into it)
+            # Find the best person for THIS position
             best_candidate, ideal_candidate = None, None
-            target_prev_idx = (WORK_POSITIONS.index(pos) - 1 + len(WORK_POSITIONS)) % len(WORK_POSITIONS)
+            target_prev_idx = (pos_idx - 1 + len(WORK_POSITIONS)) % len(WORK_POSITIONS)
             
+            # First, search for the ideal person rotating into this position
             for emp in available_and_unassigned:
                 if employee_states.get(emp, {}).get('last_pos_idx') == target_prev_idx:
                     ideal_candidate = emp
                     break
             
+            # If an ideal candidate is found, they are the best. Otherwise, use the first available person.
             best_candidate = ideal_candidate if ideal_candidate else available_and_unassigned[0]
             
             schedule[slot_str][pos] = best_candidate
             available_and_unassigned.remove(best_candidate)
 
-            # If a new Conductor was just placed, book them for the next slot too
+            # Handle 1-hour Conductor for new assignments
             if pos == 'Conductor' and i + 1 < len(time_slots):
                 next_slot_str = time_slots[i+1]
                 if best_candidate in availability.get(next_slot_str, []) and not schedule[next_slot_str]['Conductor']:
                     schedule[next_slot_str]['Conductor'] = best_candidate
         
         # Update states for all employees assigned in this slot
-        for pos_idx, pos in enumerate(WORK_POSITIONS):
-            emp = schedule[slot_str].get(pos)
-            if emp: employee_states[emp]['last_pos_idx'] = pos_idx
+        for p_idx, p_name in enumerate(WORK_POSITIONS):
+            emp = schedule[slot_str].get(p_name)
+            if emp: employee_states[emp]['last_pos_idx'] = p_idx
 
     schedule_rows = [{"Time": time, **positions} for time, positions in schedule.items()]
     out_df = pd.DataFrame(schedule_rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).fillna("")
     for col in ["Break", "ToffTL"]: out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(list(set(x)))) if isinstance(x, list) else x)
     final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
     return final_df.to_csv(index=False)
+
 
 # ==============================================================================
 # SECTION 3: HEURISTIC (CONDUCTOR FIRST) SCHEDULER
