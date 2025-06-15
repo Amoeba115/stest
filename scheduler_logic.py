@@ -3,11 +3,18 @@ import pandas as pd
 from io import StringIO
 from datetime import datetime, time
 import copy
-from itertools import permutations
+from itertools import permutations, cycle
 
 # ==============================================================================
-# SECTION 1: SHARED HELPER FUNCTIONS
+# SECTION 1: SHARED CONFIGURATION AND HELPERS
 # ==============================================================================
+
+FINAL_SCHEDULE_ROW_ORDER = [
+    "Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Expo", 
+    "Drink Maker 1", "Drink Maker 2", "Line Buster 3", "Break", "ToffTL"
+]
+WORK_POSITIONS = [p for p in FINAL_SCHEDULE_ROW_ORDER if p not in ["Break", "ToffTL"]]
+LINE_BUSTER_ROLES = ["Line Buster 1", "Line Buster 2", "Line Buster 3"]
 
 def parse_time_input(time_val, ref_date):
     if pd.isna(time_val) or str(time_val).strip().upper() in ['N/A', '']: return pd.NaT
@@ -23,7 +30,7 @@ def preprocess_employee_data(employee_data_list):
         s_start, s_end = parse_time_input(emp_data.get('Shift Start'), ref_date), parse_time_input(emp_data.get('Shift End'), ref_date)
         b_start, t_start = parse_time_input(emp_data.get('Break'), ref_date), parse_time_input(emp_data.get('ToffTL Start'), ref_date)
         b_end = b_start + pd.Timedelta(minutes=30) if pd.notna(b_start) else None
-        t_end = t_start + pd.Timedelta(minutes=60) if pd.notna(t_start) else None # Assuming ToffTL can be longer
+        t_end = t_start + pd.Timedelta(minutes=60) if pd.notna(t_start) else None
         if pd.notna(s_start) and pd.notna(s_end):
             curr = s_start
             while curr < s_end:
@@ -33,41 +40,72 @@ def preprocess_employee_data(employee_data_list):
     return pd.DataFrame(all_slots) if all_slots else pd.DataFrame()
 
 # ==============================================================================
-# SECTION 2: HEURISTIC (CONDUCTOR FIRST) SCHEDULER
+# SECTION 2: CYCLICAL SCHEDULER (NEW)
 # ==============================================================================
-WORK_POSITIONS = ["Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Expo", "Drink Maker 1", "Drink Maker 2", "Line Buster 3"]
-ALL_POSITIONS = WORK_POSITIONS + ["Break", "ToffTL"]
-LINE_BUSTER_ROLES = ["Line Buster 1", "Line Buster 2", "Line Buster 3"]
+def create_schedule_cyclical(store_open_time_obj, store_close_time_obj, employee_data_list):
+    df_long = preprocess_employee_data(employee_data_list)
+    if df_long.empty: return "No data."
+    time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
+    availability = {t: sorted(list(g['EmployeeNameFML'])) for t, g in df_long[~df_long['IsOnBreak'] & ~df_long['IsOnToffTL']].groupby('Time')}
+    schedule = {t: {p: ("" if p not in ["Break", "ToffTL"] else []) for p in FINAL_SCHEDULE_ROW_ORDER} for t in time_slots}
 
+    for i, slot_str in enumerate(time_slots):
+        # Handle Breaks and ToffTL
+        for _, row in df_long[df_long['Time'] == slot_str].iterrows():
+            if row['IsOnBreak']: schedule[slot_str]['Break'].append(row['EmployeeNameFML'])
+            if row['IsOnToffTL']: schedule[slot_str]['ToffTL'].append(row['EmployeeNameFML'])
+        
+        # If this slot's Conductor position is already filled by the previous slot, honor it
+        if schedule[slot_str]['Conductor'] != "":
+            continue
+
+        available_emps = availability.get(slot_str, [])
+        if not available_emps: continue
+
+        emp_cycler = cycle(available_emps)
+        
+        for pos in WORK_POSITIONS:
+            # Find the next available person for this position
+            assigned_emp = next(emp_cycler)
+            
+            # If the current assignment is Conductor, try to book them for the next slot too
+            if pos == 'Conductor' and i + 1 < len(time_slots):
+                next_slot_str = time_slots[i+1]
+                # Check if the employee is available and the spot is free in the next slot
+                if assigned_emp in availability.get(next_slot_str, []) and schedule[next_slot_str]['Conductor'] == "":
+                    schedule[next_slot_str]['Conductor'] = assigned_emp
+
+            schedule[slot_str][pos] = assigned_emp
+    
+    schedule_rows = [{"Time": time, **positions} for time, positions in schedule.items()]
+    out_df = pd.DataFrame(schedule_rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).fillna("")
+    for col in ["Break", "ToffTL"]: out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(list(set(x)))) if isinstance(x, list) else x)
+    final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
+    return final_df.to_csv(index=False)
+
+# ==============================================================================
+# SECTION 3: HEURISTIC (CONDUCTOR FIRST) SCHEDULER
+# ==============================================================================
 def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
     availability = {t: set(g['EmployeeNameFML']) for t, g in df_long[~df_long['IsOnBreak'] & ~df_long['IsOnToffTL']].groupby('Time')}
-    
-    # Correctly initialize schedule grid
-    schedule = {t: {p: ("" if p not in ["Break", "ToffTL"] else []) for p in ALL_POSITIONS} for t in time_slots}
-    
+    schedule = {t: {p: ("" if p not in ["Break", "ToffTL"] else []) for p in FINAL_SCHEDULE_ROW_ORDER} for t in time_slots}
     employee_last_worked = {emp: -100 for emp in df_long['EmployeeNameFML'].unique()}
-    
-    # Pass 1: Pre-assign Conductors
     for i, slot_str in enumerate(time_slots):
         slot_time = parse_time_input(slot_str, datetime(1970,1,1).date()).time()
         if slot_time.minute != 0 or i + 1 >= len(time_slots): continue
-        next_slot_str = time_slots[i+1]
+        next_slot_str, best_candidate, max_idle_time = time_slots[i+1], None, -1
         possible_candidates = list(availability.get(slot_str, set()).intersection(availability.get(next_slot_str, set())))
-        best_candidate, max_idle_time = None, -1
         for emp in sorted(possible_candidates):
             idle_time = i - employee_last_worked[emp]
-            if idle_time > max_idle_time:
-                max_idle_time, best_candidate = idle_time, emp
+            if idle_time > max_idle_time: max_idle_time, best_candidate = idle_time, emp
         if best_candidate:
             schedule[slot_str]['Conductor'], schedule[next_slot_str]['Conductor'] = best_candidate, best_candidate
             availability[slot_str].remove(best_candidate)
             availability[next_slot_str].remove(best_candidate)
             employee_last_worked[best_candidate] = i + 1
-
-    # Pass 2: Fill other positions
     employee_states = {}
     for i, slot_str in enumerate(time_slots):
         for _, row in df_long[df_long['Time'] == slot_str].iterrows():
@@ -90,15 +128,14 @@ def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employe
                 state['time_in_pos'] = state.get('time_in_pos', 0) + 1 if state.get('last_pos') == pos else 1
                 state['last_pos'] = pos
                 employee_states[best_candidate] = state
-    
     schedule_rows = [{"Time": time, **positions} for time, positions in schedule.items()]
-    out_df = pd.DataFrame(schedule_rows).fillna("")
+    out_df = pd.DataFrame(schedule_rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).fillna("")
     for col in ["Break", "ToffTL"]: out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(list(set(x)))) if isinstance(x, list) else x)
-    final_df = out_df.set_index("Time")[ALL_POSITIONS].transpose().reset_index().rename(columns={'index': 'Position'})
+    final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
     return final_df.to_csv(index=False)
 
 # ==============================================================================
-# SECTION 3: BACKTRACKING (MOST STRICT) SCHEDULER
+# SECTION 4: BACKTRACKING (MOST STRICT) SCHEDULER
 # ==============================================================================
 def is_assignment_valid_backtracking(assignments, time_slot_obj, prev_states):
     for pos, emp in assignments.items():
@@ -108,7 +145,6 @@ def is_assignment_valid_backtracking(assignments, time_slot_obj, prev_states):
            (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2): return False
         if pos == 'Conductor' and last_pos != 'Conductor' and time_slot_obj.minute != 0: return False
     return True
-
 def solve_recursive(time_idx, time_slots, availability, schedule, states):
     if time_idx >= len(time_slots): return True, schedule
     slot_str, slot_obj = time_slots[time_idx], parse_time_input(time_slots[time_idx], datetime(1970,1,1).date())
@@ -125,7 +161,6 @@ def solve_recursive(time_idx, time_slots, availability, schedule, states):
             is_solved, final_schedule = solve_recursive(time_idx + 1, time_slots, availability, schedule, new_states)
             if is_solved: return True, final_schedule
     return False, None
-
 def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
@@ -141,25 +176,22 @@ def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, empl
         row["Break"] = ", ".join(sorted(list(set(breaks))))
         row["ToffTL"] = ", ".join(sorted(list(set(tofftl))))
         rows.append(row)
-    out_df = pd.DataFrame(rows).set_index("Time").fillna("").transpose().reset_index().rename(columns={'index':'Position'})
+    out_df = pd.DataFrame(rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).set_index("Time").fillna("").transpose().reset_index().rename(columns={'index':'Position'})
     return out_df.to_csv(index=False)
 
 # ==============================================================================
-# SECTION 4: SIMPLE (GREEDY) SCHEDULER
+# SECTION 5: SIMPLE (GREEDY) SCHEDULER
 # ==============================================================================
 def create_schedule_simple(store_open_time_obj, store_close_time_obj, employee_data_list):
     df = preprocess_employee_data(employee_data_list)
     if df.empty: return "No employee slots generated from input."
-    positions_ordered = ["Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Expo", "Drink Maker 1", "Drink Maker 2", "Line Buster 3", "Break", "ToffTL"]
-    work_positions_priority_order = ["Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Expo", "Drink Maker 1", "Drink Maker 2", "Line Buster 3"]
-    line_buster_roles = ["Line Buster 1", "Line Buster 2", "Line Buster 3"]
     time_map = {ts: parse_time_input(ts, datetime(1970, 1, 1).date()) for ts in df['Time'].unique()}
     all_slots_str = sorted(df['Time'].unique(), key=lambda t: time_map.get(t))
     emp_info_map = {t: g.to_dict('records') for t, g in df.groupby('Time')}
     schedule_rows, emp_lb_last, emp_cur_pos, emp_last_time_spec_pos, g_time_step = [], {}, {}, {}, 0
     for time_slot in all_slots_str:
         g_time_step += 1
-        cur_assigns = {p: "" for p in positions_ordered}
+        cur_assigns = {p: "" for p in FINAL_SCHEDULE_ROW_ORDER}
         cur_assigns["Break"], cur_assigns["ToffTL"] = [], []
         active_emps_details = sorted(emp_info_map.get(time_slot, []), key=lambda x: x['EmployeeNameFML'])
         processed_this_slot, avail_for_work = set(), []
@@ -171,22 +203,21 @@ def create_schedule_simple(store_open_time_obj, store_close_time_obj, employee_d
             elif emp_d["IsOnToffTL"]:
                 processed_this_slot.add(emp_n); cur_assigns["ToffTL"].append(emp_n)
                 emp_lb_last[emp_n]=False; emp_cur_pos[emp_n]=None
-            else:
-                avail_for_work.append(emp_n)
-        for pos in work_positions_priority_order:
+            else: avail_for_work.append(emp_n)
+        for pos in WORK_POSITIONS:
             best_candidate, min_last_time = None, float('inf')
             for emp in [e for e in avail_for_work if e not in processed_this_slot]:
-                if pos in line_buster_roles and emp_lb_last.get(emp, False): continue
+                if pos in LINE_BUSTER_ROLES and emp_lb_last.get(emp, False): continue
                 last_time = emp_last_time_spec_pos.get(emp, {}).get(pos, -1)
                 if last_time < min_last_time:
                     min_last_time, best_candidate = last_time, emp
             if best_candidate:
                 cur_assigns[pos] = best_candidate
                 processed_this_slot.add(best_candidate)
-                emp_lb_last[best_candidate] = (pos in line_buster_roles)
+                emp_lb_last[best_candidate] = (pos in LINE_BUSTER_ROLES)
                 emp_cur_pos[best_candidate] = pos
                 emp_last_time_spec_pos.setdefault(best_candidate, {})[pos] = g_time_step
         schedule_rows.append({"Time": time_slot, **cur_assigns})
-    out_df = pd.DataFrame(schedule_rows, columns=["Time"] + positions_ordered)
+    out_df = pd.DataFrame(schedule_rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER)
     final_df = out_df.set_index("Time").transpose().reset_index().rename(columns={'index': 'Position'})
     return final_df.to_csv(index=False)
