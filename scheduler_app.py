@@ -62,7 +62,7 @@ st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_h
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
     ('Rotational', 'Simple', 'Heuristic (Conductor First)', 'Backtracking (Most Strict). *This is the recommended option. Only try the others if this one repeatedly fails*'),
-    help="Rotational: Cycles people through positions in order. <br> Simple: I honestly don't remember what I built this one to do. It will technically give you a schedule though, so I'm leaving it lol. <br> Heuristic: Fills in all Conductor positions for the day and then fills in the rest by half-hour. <br> Backtracking: Tries all combinations to find the optimal one."
+    help="*Rotational*: Cycles people through positions in order. *Simple*: I honestly don't remember what I built this one to do. It will technically give you a schedule though, so I'm leaving it lol. *Heuristic*: Fills in all Conductor positions for the day and then fills in the rest by half-hour. *Backtracking*: Tries all combinations to find the optimal one."
 )
 
 # Store Hours & Employee Inputs
