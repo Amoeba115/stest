@@ -61,7 +61,7 @@ if uploaded_file is not None:
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
-    ('Rotational', 'Simple', 'Heuristic (Conductor First)', 'Backtracking (Most Strict)'),
+    ('Rotational', 'Simple', 'Heuristic (Conductor First)', 'Backtracking (Most Strict). *This is the recommended option. Only try the others if this one repeatedly fails*'),
     help="Rotational: Cycles people through positions. Simple: Least-recently-used. Heuristic: Prioritizes Conductor. Backtracking: Tries all combinations."
 )
 
