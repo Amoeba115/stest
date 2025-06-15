@@ -40,7 +40,7 @@ def preprocess_employee_data(employee_data_list):
     return pd.DataFrame(all_slots) if all_slots else pd.DataFrame()
 
 # ==============================================================================
-# SECTION 2: ROTATIONAL SCHEDULER (NEWLY REFINED)
+# SECTION 2: ROTATIONAL SCHEDULER
 # ==============================================================================
 def create_schedule_rotational(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
@@ -49,67 +49,43 @@ def create_schedule_rotational(store_open_time_obj, store_close_time_obj, employ
     availability = {t: sorted(list(g['EmployeeNameFML'])) for t, g in df_long[~df_long['IsOnBreak'] & ~df_long['IsOnToffTL']].groupby('Time')}
     schedule = {t: {p: ("" if p not in ["Break", "ToffTL"] else []) for p in FINAL_SCHEDULE_ROW_ORDER} for t in time_slots}
     employee_states = {emp: {'last_pos_idx': -1} for emp in df_long['EmployeeNameFML'].unique()}
-
     for i, slot_str in enumerate(time_slots):
-        # Handle Breaks and ToffTL
         for _, row in df_long[df_long['Time'] == slot_str].iterrows():
             if row['IsOnBreak']: schedule[slot_str]['Break'].append(row['EmployeeNameFML'])
             if row['IsOnToffTL']: schedule[slot_str]['ToffTL'].append(row['EmployeeNameFML'])
-
         available_emps = availability.get(slot_str, [])
         if not available_emps: continue
-
-        # Determine ideal next positions
         ideal_assignments = {}
         for emp in available_emps:
             last_idx = employee_states[emp]['last_pos_idx']
             next_idx = (last_idx + 1) % len(WORK_POSITIONS)
             ideal_assignments[emp] = WORK_POSITIONS[next_idx]
-
-        # Handle pre-assignments and collisions
         displaced_employees = []
-        
-        # Check for Conductor continuations
         if i > 0:
             prev_conductor = schedule[time_slots[i-1]]['Conductor']
             if prev_conductor in available_emps and schedule[time_slots[i-2]]['Conductor'] != prev_conductor:
                  schedule[slot_str]['Conductor'] = prev_conductor
-        
-        # Place ideal assignments if possible
         for emp, ideal_pos in ideal_assignments.items():
             if emp in displaced_employees: continue
-            
-            # If the ideal position is already taken
             if schedule[slot_str][ideal_pos] != "":
                 displaced_employees.append(emp)
                 continue
-            
-            # Check hard rules
             last_pos = WORK_POSITIONS[employee_states[emp]['last_pos_idx']] if employee_states[emp]['last_pos_idx'] != -1 else None
             if ideal_pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES:
                  displaced_employees.append(emp)
                  continue
-
             schedule[slot_str][ideal_pos] = emp
-        
-        # Place displaced employees in best available slots
         open_positions = [p for p in WORK_POSITIONS if schedule[slot_str][p] == ""]
         for emp in displaced_employees:
             for pos in open_positions:
                 last_pos = WORK_POSITIONS[employee_states[emp]['last_pos_idx']] if employee_states[emp]['last_pos_idx'] != -1 else None
-                if pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES:
-                    continue # Can't place them here
-                
+                if pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES: continue
                 schedule[slot_str][pos] = emp
                 open_positions.remove(pos)
                 break
-        
-        # Update states for all assigned employees
         for pos in WORK_POSITIONS:
             emp = schedule[slot_str][pos]
-            if emp:
-                employee_states[emp]['last_pos_idx'] = WORK_POSITIONS.index(pos)
-
+            if emp: employee_states[emp]['last_pos_idx'] = WORK_POSITIONS.index(pos)
     schedule_rows = [{"Time": time, **positions} for time, positions in schedule.items()]
     out_df = pd.DataFrame(schedule_rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).fillna("")
     for col in ["Break", "ToffTL"]: out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(list(set(x)))) if isinstance(x, list) else x)
@@ -120,7 +96,6 @@ def create_schedule_rotational(store_open_time_obj, store_close_time_obj, employ
 # SECTION 3: HEURISTIC (CONDUCTOR FIRST) SCHEDULER
 # ==============================================================================
 def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employee_data_list):
-    # This logic remains unchanged
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
@@ -169,10 +144,9 @@ def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employe
     return final_df.to_csv(index=False)
 
 # ==============================================================================
-# SECTION 4: BACKTRACKING (MOST STRICT) SCHEDULER
+# SECTION 4: BACKTRACKING (MOST STRICT) SCHEDULER (IMPROVED)
 # ==============================================================================
 def is_assignment_valid_backtracking(assignments, time_slot_obj, prev_states):
-    # This logic remains unchanged
     for pos, emp in assignments.items():
         last_pos, time_in_pos = prev_states.get(emp, {}).get('last_pos'), prev_states.get(emp, {}).get('time_in_pos', 0)
         if (pos in LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 1) or \
@@ -180,14 +154,29 @@ def is_assignment_valid_backtracking(assignments, time_slot_obj, prev_states):
            (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2): return False
         if pos == 'Conductor' and last_pos != 'Conductor' and time_slot_obj.minute != 0: return False
     return True
+
 def solve_recursive(time_idx, time_slots, availability, schedule, states):
-    # This logic remains unchanged
     if time_idx >= len(time_slots): return True, schedule
     slot_str, slot_obj = time_slots[time_idx], parse_time_input(time_slots[time_idx], datetime(1970,1,1).date())
     avail_emps = list(availability.get(slot_str, []))
     positions_to_fill = WORK_POSITIONS[:len(avail_emps)]
     if len(positions_to_fill) != len(avail_emps): return False, None
+    
+    # --- NEW: Prioritize permutations that rotate employees ---
+    rotating_perms, non_rotating_perms = [], []
     for p in permutations(avail_emps):
+        assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
+        is_rotating = True
+        for pos, emp in assignments.items():
+            # If anyone stays in the same non-Conductor role, it's not a fully rotating permutation
+            if states.get(emp, {}).get('last_pos') == pos and pos != 'Conductor':
+                is_rotating = False
+                break
+        if is_rotating: rotating_perms.append(p)
+        else: non_rotating_perms.append(p)
+
+    # --- Try rotating permutations first, then non-rotating ones ---
+    for p in rotating_perms + non_rotating_perms:
         assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
         if is_assignment_valid_backtracking(assignments, slot_obj, states):
             new_states = copy.deepcopy(states)
@@ -196,9 +185,10 @@ def solve_recursive(time_idx, time_slots, availability, schedule, states):
             schedule[time_idx] = assignments
             is_solved, final_schedule = solve_recursive(time_idx + 1, time_slots, availability, schedule, new_states)
             if is_solved: return True, final_schedule
+            
     return False, None
+
 def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, employee_data_list):
-    # This logic remains unchanged
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
@@ -220,7 +210,6 @@ def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, empl
 # SECTION 5: SIMPLE (GREEDY) SCHEDULER
 # ==============================================================================
 def create_schedule_simple(store_open_time_obj, store_close_time_obj, employee_data_list):
-    # This logic remains unchanged
     df = preprocess_employee_data(employee_data_list)
     if df.empty: return "No employee slots generated from input."
     time_map = {ts: parse_time_input(ts, datetime(1970, 1, 1).date()) for ts in df['Time'].unique()}
