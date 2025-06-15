@@ -67,8 +67,8 @@ algorithm_choice = st.sidebar.radio(
 
 # Store Hours & Employee Inputs
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Store Hours</h3>', unsafe_allow_html=True)
-store_open_time_str = st.sidebar.text_input("Store Open Time", "8:00 AM")
-store_close_time_str = st.sidebar.text_input("Store Close Time", "11:00 PM")
+store_open_time_str = st.sidebar.text_input("Store Open Time", " ")
+store_close_time_str = st.sidebar.text_input("Store Close Time", " ")
 
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Employees</h3>', unsafe_allow_html=True)
 num_employees = st.sidebar.number_input(
@@ -81,14 +81,14 @@ for i in range(num_employees):
     defaults = st.session_state.employee_data[i] if i < len(st.session_state.employee_data) else {}
     st.sidebar.markdown(f"--- **Employee {i+1}** ---")
     emp_name = st.sidebar.text_input(f"Name (Employee {i+1})", value=defaults.get("Name", ""), key=f"name_{i}")
-    shift_start_str = st.sidebar.text_input(f"Shift Start", value=defaults.get("Shift Start", "9:00 AM"), key=f"s_start_{i}")
-    shift_end_str = st.sidebar.text_input(f"Shift End", value=defaults.get("Shift End", "5:00 PM"), key=f"s_end_{i}")
-    break_start_str = st.sidebar.text_input(f"Break Start", value=defaults.get("Break", "1:00 PM"), key=f"break_{i}")
+    shift_start_str = st.sidebar.text_input(f"Shift Start", value=defaults.get("Shift Start", " "), key=f"s_start_{i}")
+    shift_end_str = st.sidebar.text_input(f"Shift End", value=defaults.get("Shift End", " "), key=f"s_end_{i}")
+    break_start_str = st.sidebar.text_input(f"Break Start", value=defaults.get("Break", " "), key=f"break_{i}")
     has_tofftl = st.sidebar.checkbox(f"Training Off The Line?", value=(defaults.get("Has ToffTL", "No") == "Yes"), key=f"has_tofftl_{i}")
     tofftl_start_str, tofftl_end_str = None, None
     if has_tofftl:
-        tofftl_start_str = st.sidebar.text_input(f"ToffTL Start", value=defaults.get("ToffTL Start", "11:00 AM"), key=f"tofftl_s_{i}")
-        tofftl_end_str = st.sidebar.text_input(f"ToffTL End", value=defaults.get("ToffTL End", "12:00 PM"), key=f"tofftl_e_{i}")
+        tofftl_start_str = st.sidebar.text_input(f"ToffTL Start", value=defaults.get("ToffTL Start", " "), key=f"tofftl_s_{i}")
+        tofftl_end_str = st.sidebar.text_input(f"ToffTL End", value=defaults.get("ToffTL End", " "), key=f"tofftl_e_{i}")
     if emp_name:
         employee_data_list.append({"Name": emp_name, "Shift Start": shift_start_str, "Shift End": shift_end_str, "Break": break_start_str, "ToffTL Start": tofftl_start_str, "ToffTL End": tofftl_end_str})
 
