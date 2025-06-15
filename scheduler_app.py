@@ -3,8 +3,8 @@ import streamlit as st
 import pandas as pd
 from datetime import time, datetime
 from io import StringIO
-# Import all three scheduling functions
-from scheduler_logic import create_schedule_simple, create_schedule_heuristic, create_schedule_backtracking, parse_time_input
+# Import all four scheduling functions
+from scheduler_logic import create_schedule_simple, create_schedule_heuristic, create_schedule_backtracking, create_schedule_cyclical, parse_time_input
 
 # --- Helper Function for Importing Data ---
 def parse_summary_file(file_content):
@@ -57,12 +57,12 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-# Algorithm Selector
+# --- UPDATED: Algorithm Selector with four options ---
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
-    ('Simple', 'Heuristic (Conductor First)', 'Backtracking (Most Strict)'),
-    help="Simple: Fast, basic logic. Heuristic: Prioritizes Conductor rules. Backtracking: Tries all combinations to meet hard rules."
+    ('Cyclical', 'Simple', 'Heuristic (Conductor First)', 'Backtracking (Most Strict)'),
+    help="Cyclical: Basic rotation. Simple: Least-recently-used. Heuristic: Prioritizes Conductor. Backtracking: Tries all combinations."
 )
 
 # Store Hours & Employee Inputs
@@ -84,8 +84,7 @@ for i in range(num_employees):
     shift_start_str = st.sidebar.text_input(f"Shift Start", value=defaults.get("Shift Start", "9:00 AM"), key=f"s_start_{i}")
     shift_end_str = st.sidebar.text_input(f"Shift End", value=defaults.get("Shift End", "5:00 PM"), key=f"s_end_{i}")
     break_start_str = st.sidebar.text_input(f"Break Start", value=defaults.get("Break", "1:00 PM"), key=f"break_{i}")
-    has_tofftl_default = defaults.get("Has ToffTL", "No") == "Yes"
-    has_tofftl = st.sidebar.checkbox(f"Training Off The Line?", value=has_tofftl_default, key=f"has_tofftl_{i}")
+    has_tofftl = st.sidebar.checkbox(f"Training Off The Line?", value=(defaults.get("Has ToffTL", "No") == "Yes"), key=f"has_tofftl_{i}")
     tofftl_start_str, tofftl_end_str = None, None
     if has_tofftl:
         tofftl_start_str = st.sidebar.text_input(f"ToffTL Start", value=defaults.get("ToffTL Start", "11:00 AM"), key=f"tofftl_s_{i}")
@@ -94,38 +93,28 @@ for i in range(num_employees):
         employee_data_list.append({"Name": emp_name, "Shift Start": shift_start_str, "Shift End": shift_end_str, "Break": break_start_str, "ToffTL Start": tofftl_start_str, "ToffTL End": tofftl_end_str})
 
 st.sidebar.markdown("---")
-
-# --- FIX: Restored and enhanced the Show Input Data Summary button functionality ---
+# Action Buttons
 if st.sidebar.button("Show Input Data Summary"):
-    if not employee_data_list:
-        st.warning("Please enter at least one employee's data first.")
+    if not employee_data_list: st.warning("Please enter at least one employee.")
     else:
         summary_string = ""
         for i, emp_data in enumerate(employee_data_list):
             summary_string += f"--- Employee {i+1} ---\n"
+            has_tofftl_data = bool(emp_data.get('ToffTL Start'))
             summary_string += f"Name: {emp_data.get('Name', '')}\n"
             summary_string += f"Shift Start: {emp_data.get('Shift Start', '')}\n"
             summary_string += f"Shift End: {emp_data.get('Shift End', '')}\n"
             summary_string += f"Break: {emp_data.get('Break', '')}\n"
-            has_tofftl_data = bool(emp_data.get('ToffTL Start'))
             summary_string += f"Has ToffTL: {'Yes' if has_tofftl_data else 'No'}\n"
             if has_tofftl_data:
                 summary_string += f"ToffTL Start: {emp_data.get('ToffTL Start', '')}\n"
                 summary_string += f"ToffTL End: {emp_data.get('ToffTL End', '')}\n"
             summary_string += "\n"
-
         st.subheader("Copyable Input Data Summary")
-        st.info("You can copy the text below or download the file to save your inputs.")
-        st.text_area("All Employee Data", summary_string, height=300, key="summary_text_area")
-        st.download_button(
-            label="Download Input Data",
-            data=summary_string,
-            file_name="employee_inputs.txt",
-            mime="text/plain"
-        )
+        st.text_area("All Employee Data", summary_string, height=300)
+        st.download_button("Download Input Data", summary_string, "employee_inputs.txt", "text/plain")
 
 st.sidebar.markdown("---")
-
 if st.sidebar.button("Generate Schedule"):
     if not employee_data_list: st.error("Please add at least one employee.")
     else:
@@ -135,21 +124,17 @@ if st.sidebar.button("Generate Schedule"):
         if pd.isna(store_open_dt) or pd.isna(store_close_dt): st.error("Invalid store open/close time.")
         else:
             with st.spinner(f"Generating with {algorithm_choice.split(' ')[0]} logic..."):
-                try:
-                    logic_map = {
-                        'Simple': create_schedule_simple,
-                        'Heuristic (Conductor First)': create_schedule_heuristic,
-                        'Backtracking (Most Strict)': create_schedule_backtracking
-                    }
-                    schedule_func = logic_map[algorithm_choice]
-                    schedule_output = schedule_func(store_open_dt.time(), store_close_dt.time(), employee_data_list)
-                    
-                    st.success("Schedule Generated!")
-                    st.subheader("Generated Schedule")
-                    note, csv_data = (schedule_output.split('\n\n', 1) if "NOTE:" in schedule_output else ("", schedule_output))
-                    if note: st.info(note)
-                    
-                    st.dataframe(pd.read_csv(StringIO(csv_data)))
-                    st.download_button("Download Schedule", csv_data, "schedule.csv", "text/csv")
-                except Exception as e:
-                    st.error(f"An error occurred during schedule generation: {e}")
+                logic_map = {
+                    'Cyclical': create_schedule_cyclical,
+                    'Simple': create_schedule_simple,
+                    'Heuristic (Conductor First)': create_schedule_heuristic,
+                    'Backtracking (Most Strict)': create_schedule_backtracking
+                }
+                schedule_func = logic_map[algorithm_choice]
+                schedule_output = schedule_func(store_open_dt.time(), store_close_dt.time(), employee_data_list)
+                st.success("Schedule Generated!")
+                st.subheader("Generated Schedule")
+                note, csv_data = (schedule_output.split('\n\n', 1) if "NOTE:" in schedule_output else ("", schedule_output))
+                if note: st.info(note)
+                st.dataframe(pd.read_csv(StringIO(csv_data)))
+                st.download_button("Download Schedule", csv_data, "schedule.csv", "text/csv")
