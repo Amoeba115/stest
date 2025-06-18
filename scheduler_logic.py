@@ -142,24 +142,17 @@ def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employe
 # SECTION 4: BACKTRACKING (MOST STRICT) SCHEDULER (IMPROVED)
 # ==============================================================================
 def is_assignment_valid_backtracking(assignments, time_slot_obj, prev_states):
+    # This function now only checks the absolute hard rules
     for pos, emp in assignments.items():
         state = prev_states.get(emp, {})
-        last_pos, time_in_pos, history = state.get('last_pos'), state.get('time_in_pos', 0), state.get('history', [])
+        last_pos, time_in_pos = state.get('last_pos'), state.get('time_in_pos', 0)
         
-        # --- Hard Rule Checks ---
         if (pos in LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 1) or \
            (pos == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
            (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2):
             return False
         if pos == 'Conductor' and last_pos != 'Conductor' and time_slot_obj.minute != 0:
             return False
-        
-        # --- NEW: Anti-ABAB Pattern Rule ---
-        # Checks if assigning `pos` continues a 2+ hour (5-block) ABAB pattern.
-        # e.g., History is [B, A, B, A] and new position is B.
-        if len(history) == 4 and history[0] == history[2] and history[1] == history[3] and history[2] == pos:
-            return False
-            
     return True
 
 def solve_recursive(time_idx, time_slots, availability, schedule, states):
@@ -169,21 +162,29 @@ def solve_recursive(time_idx, time_slots, availability, schedule, states):
     positions_to_fill = WORK_POSITIONS[:len(avail_emps)]
     if len(positions_to_fill) != len(avail_emps): return False, None
     
-    rotating_perms, non_rotating_perms = [], []
+    # --- NEW: Separate permutations into preferred (no ABAB) and last resort (allows ABAB) ---
+    preferred_perms, last_resort_perms = [], []
     for p in permutations(avail_emps):
         assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
-        is_rotating = all(states.get(emp, {}).get('last_pos') != pos or pos == 'Conductor' for pos, emp in assignments.items())
-        if is_rotating: rotating_perms.append(p)
-        else: non_rotating_perms.append(p)
+        is_abab = False
+        for pos, emp in assignments.items():
+            history = states.get(emp, {}).get('history', [])
+            if len(history) == 4 and history[0] == history[2] and history[1] == history[3] and history[2] == pos:
+                is_abab = True
+                break
+        if is_abab:
+            last_resort_perms.append(p)
+        else:
+            preferred_perms.append(p)
 
-    for p in rotating_perms + non_rotating_perms:
+    # --- Try preferred permutations first, then the last resort ones ---
+    for p in preferred_perms + last_resort_perms:
         assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
         if is_assignment_valid_backtracking(assignments, slot_obj, states):
             new_states = copy.deepcopy(states)
             for pos, emp in assignments.items():
-                # Update state with history
                 history = new_states.get(emp, {}).get('history', [])
-                new_history = (history + [pos])[-4:] # Keep only the last 4 positions
+                new_history = (history + [pos])[-4:]
                 new_states[emp] = {
                     'last_pos': pos, 
                     'time_in_pos': (states.get(emp,{}).get('time_in_pos',0)+1 if states.get(emp,{}).get('last_pos')==pos else 1),
@@ -202,6 +203,18 @@ def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, empl
     availability = {t: list(g['EmployeeNameFML']) for t, g in df_long[~df_long['IsOnBreak'] & ~df_long['IsOnToffTL']].groupby('Time')}
     is_solved, final_assignments = solve_recursive(0, time_slots, availability, [{} for _ in time_slots], {})
     if not is_solved: return "Could not find a valid schedule that meets all hard rules."
+    note = ""
+    # Check if the final solution contains an ABAB pattern to notify the user
+    final_states = {}
+    for i in range(len(time_slots)):
+        slot_assignments = final_assignments[i]
+        for pos, emp in slot_assignments.items():
+            history = final_states.get(emp, {}).get('history', [])
+            if len(history) == 4 and history[0] == history[2] and history[1] == history[3] and history[2] == pos:
+                note = "NOTE: A valid schedule was only found by allowing some employees to alternate between two positions for over 2 hours.\n\n"
+            new_history = (history + [pos])[-4:]
+            final_states[emp] = {'history': new_history}
+    
     rows = []
     for i, slot_str in enumerate(time_slots):
         row = {"Time": slot_str, **final_assignments[i]}
@@ -211,7 +224,7 @@ def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, empl
         row["ToffTL"] = ", ".join(sorted(list(set(tofftl))))
         rows.append(row)
     out_df = pd.DataFrame(rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).set_index("Time").fillna("").transpose().reset_index().rename(columns={'index':'Position'})
-    return out_df.to_csv(index=False)
+    return note + out_df.to_csv(index=False)
 
 # ==============================================================================
 # SECTION 5: SIMPLE (GREEDY) SCHEDULER
