@@ -48,7 +48,8 @@ def create_schedule_rotational(store_open_time_obj, store_close_time_obj, employ
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
     availability = {t: sorted(list(g['EmployeeNameFML'])) for t, g in df_long[~df_long['IsOnBreak'] & ~df_long['IsOnToffTL']].groupby('Time')}
     schedule = {t: {p: ("" if p not in ["Break", "ToffTL"] else []) for p in FINAL_SCHEDULE_ROW_ORDER} for t in time_slots}
-    employee_states = {emp: {'last_pos_idx': -1} for emp in df_long['EmployeeNameFML'].unique()}
+    employee_states = {emp: {'last_pos_idx': -1, 'last_pos': None} for emp in df_long['EmployeeNameFML'].unique()}
+
     for i, slot_str in enumerate(time_slots):
         for _, row in df_long[df_long['Time'] == slot_str].iterrows():
             if row['IsOnBreak']: schedule[slot_str]['Break'].append(row['EmployeeNameFML'])
@@ -64,22 +65,43 @@ def create_schedule_rotational(store_open_time_obj, store_close_time_obj, employ
         for pos_idx, pos in enumerate(WORK_POSITIONS):
             if not available_and_unassigned: break
             if schedule[slot_str][pos]: continue
-            best_candidate, ideal_candidate = None, None
+            
+            best_candidate = None
+            # Find ideal rotating person who meets hard rules
             target_prev_idx = (pos_idx - 1 + len(WORK_POSITIONS)) % len(WORK_POSITIONS)
+            ideal_candidate = None
             for emp in available_and_unassigned:
                 if employee_states.get(emp, {}).get('last_pos_idx') == target_prev_idx:
-                    ideal_candidate = emp
-                    break
-            best_candidate = ideal_candidate if ideal_candidate else available_and_unassigned[0]
-            schedule[slot_str][pos] = best_candidate
-            available_and_unassigned.remove(best_candidate)
-            if pos == 'Conductor' and i + 1 < len(time_slots):
-                next_slot_str = time_slots[i+1]
-                if best_candidate in availability.get(next_slot_str, []) and not schedule[next_slot_str]['Conductor']:
-                    schedule[next_slot_str]['Conductor'] = best_candidate
+                    # FIX: Check hard Line Buster rule for ideal candidate
+                    last_pos = WORK_POSITIONS[target_prev_idx]
+                    if not (pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES):
+                        ideal_candidate = emp
+                        break
+            
+            if ideal_candidate:
+                best_candidate = ideal_candidate
+            else:
+                # Fallback to first available person who meets hard rules
+                for emp in available_and_unassigned:
+                    last_pos = employee_states.get(emp, {}).get('last_pos')
+                    if not (pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES):
+                        best_candidate = emp
+                        break
+            
+            if best_candidate:
+                schedule[slot_str][pos] = best_candidate
+                available_and_unassigned.remove(best_candidate)
+                if pos == 'Conductor' and i + 1 < len(time_slots):
+                    next_slot_str = time_slots[i+1]
+                    if best_candidate in availability.get(next_slot_str, []) and not schedule[next_slot_str]['Conductor']:
+                        schedule[next_slot_str]['Conductor'] = best_candidate
+        
         for p_idx, p_name in enumerate(WORK_POSITIONS):
             emp = schedule[slot_str].get(p_name)
-            if emp: employee_states[emp]['last_pos_idx'] = p_idx
+            if emp:
+                employee_states[emp]['last_pos_idx'] = p_idx
+                employee_states[emp]['last_pos'] = p_name
+
     schedule_rows = [{"Time": time, **positions} for time, positions in schedule.items()]
     out_df = pd.DataFrame(schedule_rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).fillna("")
     for col in ["Break", "ToffTL"]: out_df[col] = out_df[col].apply(lambda x: ", ".join(sorted(list(set(x)))) if isinstance(x, list) else x)
@@ -90,7 +112,6 @@ def create_schedule_rotational(store_open_time_obj, store_close_time_obj, employ
 # SECTION 3: HEURISTIC (CONDUCTOR FIRST) SCHEDULER
 # ==============================================================================
 def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employee_data_list):
-    # This logic remains unchanged
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
@@ -121,7 +142,8 @@ def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employe
             for emp in sorted(list(availability.get(slot_str, set()))):
                 state = employee_states.get(emp, {})
                 last_pos, time_in_pos = state.get('last_pos'), state.get('time_in_pos', 0)
-                if (pos in LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 1) or \
+                # FIX: Check if last_pos was ANY Line Buster role
+                if (pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES) or \
                    (pos not in LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 2): continue
                 best_candidate = emp
                 break
@@ -139,19 +161,19 @@ def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employe
     return final_df.to_csv(index=False)
 
 # ==============================================================================
-# SECTION 4: BACKTRACKING (MOST STRICT) SCHEDULER (IMPROVED)
+# SECTION 4: BACKTRACKING (MOST STRICT) SCHEDULER
 # ==============================================================================
 def is_assignment_valid_backtracking(assignments, time_slot_obj, prev_states):
-    # This function now only checks the absolute hard rules
     for pos, emp in assignments.items():
         state = prev_states.get(emp, {})
         last_pos, time_in_pos = state.get('last_pos'), state.get('time_in_pos', 0)
-        
-        if (pos in LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 1) or \
+        # FIX: Check if last_pos was ANY Line Buster role
+        if (pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES) or \
            (pos == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
-           (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2):
-            return False
-        if pos == 'Conductor' and last_pos != 'Conductor' and time_slot_obj.minute != 0:
+           (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2): return False
+        if pos == 'Conductor' and last_pos != 'Conductor' and time_slot_obj.minute != 0: return False
+        history = state.get('history', [])
+        if len(history) == 4 and history[0] == history[2] and history[1] == history[3] and history[2] == pos:
             return False
     return True
 
@@ -161,23 +183,12 @@ def solve_recursive(time_idx, time_slots, availability, schedule, states):
     avail_emps = list(availability.get(slot_str, []))
     positions_to_fill = WORK_POSITIONS[:len(avail_emps)]
     if len(positions_to_fill) != len(avail_emps): return False, None
-    
-    # --- NEW: Separate permutations into preferred (no ABAB) and last resort (allows ABAB) ---
     preferred_perms, last_resort_perms = [], []
     for p in permutations(avail_emps):
         assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
-        is_abab = False
-        for pos, emp in assignments.items():
-            history = states.get(emp, {}).get('history', [])
-            if len(history) == 4 and history[0] == history[2] and history[1] == history[3] and history[2] == pos:
-                is_abab = True
-                break
-        if is_abab:
-            last_resort_perms.append(p)
-        else:
-            preferred_perms.append(p)
-
-    # --- Try preferred permutations first, then the last resort ones ---
+        is_abab = any(len(states.get(emp, {}).get('history', [])) == 4 and states[emp]['history'][0] == states[emp]['history'][2] and states[emp]['history'][1] == states[emp]['history'][3] and states[emp]['history'][2] == pos for pos, emp in assignments.items())
+        if is_abab: last_resort_perms.append(p)
+        else: preferred_perms.append(p)
     for p in preferred_perms + last_resort_perms:
         assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
         if is_assignment_valid_backtracking(assignments, slot_obj, states):
@@ -185,15 +196,10 @@ def solve_recursive(time_idx, time_slots, availability, schedule, states):
             for pos, emp in assignments.items():
                 history = new_states.get(emp, {}).get('history', [])
                 new_history = (history + [pos])[-4:]
-                new_states[emp] = {
-                    'last_pos': pos, 
-                    'time_in_pos': (states.get(emp,{}).get('time_in_pos',0)+1 if states.get(emp,{}).get('last_pos')==pos else 1),
-                    'history': new_history
-                }
+                new_states[emp] = {'last_pos': pos, 'time_in_pos': (states.get(emp,{}).get('time_in_pos',0)+1 if states.get(emp,{}).get('last_pos')==pos else 1), 'history': new_history}
             schedule[time_idx] = assignments
             is_solved, final_schedule = solve_recursive(time_idx + 1, time_slots, availability, schedule, new_states)
             if is_solved: return True, final_schedule
-            
     return False, None
 
 def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, employee_data_list):
@@ -204,7 +210,6 @@ def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, empl
     is_solved, final_assignments = solve_recursive(0, time_slots, availability, [{} for _ in time_slots], {})
     if not is_solved: return "Could not find a valid schedule that meets all hard rules."
     note = ""
-    # Check if the final solution contains an ABAB pattern to notify the user
     final_states = {}
     for i in range(len(time_slots)):
         slot_assignments = final_assignments[i]
@@ -214,7 +219,6 @@ def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, empl
                 note = "NOTE: A valid schedule was only found by allowing some employees to alternate between two positions for over 2 hours.\n\n"
             new_history = (history + [pos])[-4:]
             final_states[emp] = {'history': new_history}
-    
     rows = []
     for i, slot_str in enumerate(time_slots):
         row = {"Time": slot_str, **final_assignments[i]}
@@ -230,7 +234,6 @@ def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, empl
 # SECTION 5: SIMPLE (GREEDY) SCHEDULER
 # ==============================================================================
 def create_schedule_simple(store_open_time_obj, store_close_time_obj, employee_data_list):
-    # This logic remains unchanged
     df = preprocess_employee_data(employee_data_list)
     if df.empty: return "No employee slots generated from input."
     time_map = {ts: parse_time_input(ts, datetime(1970, 1, 1).date()) for ts in df['Time'].unique()}
@@ -255,7 +258,8 @@ def create_schedule_simple(store_open_time_obj, store_close_time_obj, employee_d
         for pos in WORK_POSITIONS:
             best_candidate, min_last_time = None, float('inf')
             for emp in [e for e in avail_for_work if e not in processed_this_slot]:
-                if pos in LINE_BUSTER_ROLES and emp_lb_last.get(emp, False): continue
+                # FIX: Check if last_pos was ANY Line Buster role
+                if pos in LINE_BUSTER_ROLES and emp_cur_pos.get(emp) in LINE_BUSTER_ROLES: continue
                 last_time = emp_last_time_spec_pos.get(emp, {}).get(pos, -1)
                 if last_time < min_last_time:
                     min_last_time, best_candidate = last_time, emp
