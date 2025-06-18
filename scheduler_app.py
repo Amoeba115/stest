@@ -57,18 +57,18 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-# --- UPDATED: Algorithm Selector with four options ---
+# Algorithm Selector
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
-    ('Rotational', 'Simple', 'Heuristic (Conductor First)', 'Backtracking (Most Strict). *This is the recommended option. Only try the others if this one repeatedly fails*'),
-    help="*Rotational*: Cycles people through positions in order. *Simple*: I honestly don't remember what I built this one to do. It will technically give you a schedule though, so I'm leaving it lol. *Heuristic*: Fills in all Conductor positions for the day and then fills in the rest by half-hour. *Backtracking*: Tries all combinations to find the optimal one."
+    ('Rotational', 'Simple', 'Heuristic (Conductor First)', 'Backtracking (Most Strict)'),
+    help="Rotational: Cycles people through positions. Simple: Least-recently-used. Heuristic: Prioritizes Conductor. Backtracking: Tries all combinations."
 )
 
 # Store Hours & Employee Inputs
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Store Hours</h3>', unsafe_allow_html=True)
-store_open_time_str = st.sidebar.text_input("Store Open Time", " ")
-store_close_time_str = st.sidebar.text_input("Store Close Time", " ")
+store_open_time_str = st.sidebar.text_input("Store Open Time", "8:00 AM")
+store_close_time_str = st.sidebar.text_input("Store Close Time", "11:00 PM")
 
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Employees</h3>', unsafe_allow_html=True)
 num_employees = st.sidebar.number_input(
@@ -81,14 +81,14 @@ for i in range(num_employees):
     defaults = st.session_state.employee_data[i] if i < len(st.session_state.employee_data) else {}
     st.sidebar.markdown(f"--- **Employee {i+1}** ---")
     emp_name = st.sidebar.text_input(f"Name (Employee {i+1})", value=defaults.get("Name", ""), key=f"name_{i}")
-    shift_start_str = st.sidebar.text_input(f"Shift Start", value=defaults.get("Shift Start", " "), key=f"s_start_{i}")
-    shift_end_str = st.sidebar.text_input(f"Shift End", value=defaults.get("Shift End", " "), key=f"s_end_{i}")
-    break_start_str = st.sidebar.text_input(f"Break Start", value=defaults.get("Break", " "), key=f"break_{i}")
+    shift_start_str = st.sidebar.text_input(f"Shift Start", value=defaults.get("Shift Start", "9:00 AM"), key=f"s_start_{i}")
+    shift_end_str = st.sidebar.text_input(f"Shift End", value=defaults.get("Shift End", "5:00 PM"), key=f"s_end_{i}")
+    break_start_str = st.sidebar.text_input(f"Break Start", value=defaults.get("Break", "1:00 PM"), key=f"break_{i}")
     has_tofftl = st.sidebar.checkbox(f"Training Off The Line?", value=(defaults.get("Has ToffTL", "No") == "Yes"), key=f"has_tofftl_{i}")
     tofftl_start_str, tofftl_end_str = None, None
     if has_tofftl:
-        tofftl_start_str = st.sidebar.text_input(f"ToffTL Start", value=defaults.get("ToffTL Start", " "), key=f"tofftl_s_{i}")
-        tofftl_end_str = st.sidebar.text_input(f"ToffTL End", value=defaults.get("ToffTL End", " "), key=f"tofftl_e_{i}")
+        tofftl_start_str = st.sidebar.text_input(f"ToffTL Start", value=defaults.get("ToffTL Start", "11:00 AM"), key=f"tofftl_s_{i}")
+        tofftl_end_str = st.sidebar.text_input(f"ToffTL End", value=defaults.get("ToffTL End", "12:00 PM"), key=f"tofftl_e_{i}")
     if emp_name:
         employee_data_list.append({"Name": emp_name, "Shift Start": shift_start_str, "Shift End": shift_end_str, "Break": break_start_str, "ToffTL Start": tofftl_start_str, "ToffTL End": tofftl_end_str})
 
@@ -124,6 +124,7 @@ if st.sidebar.button("Generate Schedule"):
         if pd.isna(store_open_dt) or pd.isna(store_close_dt): st.error("Invalid store open/close time.")
         else:
             with st.spinner(f"Generating with {algorithm_choice.split(' ')[0]} logic..."):
+                # --- FIX: Added the 'Rotational' key to the logic map ---
                 logic_map = {
                     'Rotational': create_schedule_rotational,
                     'Simple': create_schedule_simple,
@@ -132,9 +133,11 @@ if st.sidebar.button("Generate Schedule"):
                 }
                 schedule_func = logic_map[algorithm_choice]
                 schedule_output = schedule_func(store_open_dt.time(), store_close_dt.time(), employee_data_list)
+                
                 st.success("Schedule Generated!")
                 st.subheader("Generated Schedule")
                 note, csv_data = (schedule_output.split('\n\n', 1) if "NOTE:" in schedule_output else ("", schedule_output))
                 if note: st.info(note)
+                
                 st.dataframe(pd.read_csv(StringIO(csv_data)))
                 st.download_button("Download Schedule", csv_data, "schedule.csv", "text/csv")
