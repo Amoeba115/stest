@@ -231,7 +231,7 @@ def solve_recursive(time_idx, time_slots, availability, schedule, states):
             if is_solved: return True, final_schedule
     return False, None
 
-def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, employee_data_list):
+def create_schedule_backtracking_classic(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
