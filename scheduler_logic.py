@@ -205,12 +205,38 @@ def solve_optimized_recursive(time_idx, time_slots, availability, current_schedu
 # ==============================================================================
 # SECTION 5: BACKTRACKING (CLASSIC) SCHEDULER (FROM YOUR FILE)
 # ==============================================================================
-def create_schedule_backtracking_classic(store_open_time_obj, store_close_time_obj, employee_data_list):
+def is_assignment_valid_backtracking(assignments, time_slot_obj, prev_states):
+    for pos, emp in assignments.items():
+        last_pos, time_in_pos = prev_states.get(emp, {}).get('last_pos'), prev_states.get(emp, {}).get('time_in_pos', 0)
+        if (pos in LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 1) or \
+           (pos == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
+           (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2): return False
+        if pos == 'Conductor' and last_pos != 'Conductor' and time_slot_obj.minute != 0: return False
+    return True
+
+def solve_recursive(time_idx, time_slots, availability, schedule, states):
+    if time_idx >= len(time_slots): return True, schedule
+    slot_str, slot_obj = time_slots[time_idx], parse_time_input(time_slots[time_idx], datetime(1970,1,1).date())
+    avail_emps = list(availability.get(slot_str, []))
+    positions_to_fill = WORK_POSITIONS[:len(avail_emps)]
+    if len(positions_to_fill) != len(avail_emps): return False, None
+    for p in permutations(avail_emps):
+        assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
+        if is_assignment_valid_backtracking(assignments, slot_obj, states):
+            new_states = copy.deepcopy(states)
+            for pos, emp in assignments.items():
+                new_states[emp] = {'last_pos': pos, 'time_in_pos': (states.get(emp,{}).get('time_in_pos',0)+1 if states.get(emp,{}).get('last_pos')==pos else 1)}
+            schedule[time_idx] = assignments
+            is_solved, final_schedule = solve_recursive(time_idx + 1, time_slots, availability, schedule, new_states)
+            if is_solved: return True, final_schedule
+    return False, None
+
+def create_schedule_backtracking(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
     availability = {t: list(g['EmployeeNameFML']) for t, g in df_long[~df_long['IsOnBreak'] & ~df_long['IsOnToffTL']].groupby('Time')}
-    is_solved, final_assignments = solve_classic_recursive(0, time_slots, availability, [{} for _ in time_slots], {})
+    is_solved, final_assignments = solve_recursive(0, time_slots, availability, [{} for _ in time_slots], {})
     if not is_solved: return "Could not find a valid schedule that meets all hard rules."
     rows = []
     for i, slot_str in enumerate(time_slots):
@@ -220,36 +246,8 @@ def create_schedule_backtracking_classic(store_open_time_obj, store_close_time_o
         row["Break"] = ", ".join(sorted(list(set(breaks))))
         row["ToffTL"] = ", ".join(sorted(list(set(tofftl))))
         rows.append(row)
-    out_df = pd.DataFrame(rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).set_index("Time").fillna("").transpose().reset_index().rename(columns={'index':'Position'})
+    out_df = pd.DataFrame(rows).set_index("Time").fillna("").transpose().reset_index().rename(columns={'index':'Position'})
     return out_df.to_csv(index=False)
-
-def solve_classic_recursive(time_idx, time_slots, availability, schedule, states):
-    if time_idx >= len(time_slots): return True, schedule
-    slot_str, slot_obj = time_slots[time_idx], parse_time_input(time_slots[time_idx], datetime(1970,1,1).date())
-    avail_emps = list(availability.get(slot_str, []))
-    positions_to_fill = WORK_POSITIONS[:len(avail_emps)]
-    if len(positions_to_fill) != len(avail_emps): return False, None
-    for p in permutations(avail_emps):
-        assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
-        if is_assignment_valid_backtracking_classic(assignments, slot_obj, states):
-            new_states = copy.deepcopy(states)
-            for pos, emp in assignments.items():
-                new_states[emp] = {'last_pos': pos, 'time_in_pos': (states.get(emp,{}).get('time_in_pos',0)+1 if states.get(emp,{}).get('last_pos')==pos else 1)}
-            schedule[time_idx] = assignments
-            is_solved, final_schedule = solve_classic_recursive(time_idx + 1, time_slots, availability, schedule, new_states)
-            if is_solved: return True, final_schedule
-    return False, None
-
-def is_assignment_valid_backtracking_classic(assignments, time_slot_obj, prev_states):
-    for pos, emp in assignments.items():
-        state = prev_states.get(emp, {})
-        last_pos, time_in_pos = state.get('last_pos'), state.get('time_in_pos', 0)
-        if (pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES) or \
-           (pos == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
-           (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2): return False
-        if pos == 'Conductor' and last_pos != 'Conductor' and time_slot_obj.minute != 0: return False
-    return True
-
 # ==============================================================================
 # SECTION 6: SIMPLE (GREEDY) SCHEDULER
 # ==============================================================================
