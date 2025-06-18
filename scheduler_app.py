@@ -136,7 +136,7 @@ if st.sidebar.button("Generate Schedule"):
                     'Rotational': create_schedule_rotational,
                     'Simple': create_schedule_simple,
                     'Heuristic (Conductor First)': create_schedule_heuristic,
-                    'Backtracking (Optimized)': create_schedule_backtracking,
+                    'Backtracking (Optimized)': create_schedule_backtracking_optimized,
                     'Backtracking (Classic)': create_schedule_backtracking_classic
                 }
                 schedule_func = logic_map[algorithm_choice]
