@@ -70,7 +70,7 @@ algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
     ('Rotational', 'Simple', 'Heuristic (Conductor First)', 'Backtracking (Optimized)', 'Backtracking (Classic)'),
     index=4, # Default to classic backtracking
-    help="Classic Backtracking is the most reliable complex solver. Optimized is faster but may fail more often."
+    help="Classic Backtracking is a reliable solver. Optimized is faster but may fail more often."
 )
 
 # Store Hours & Employee Inputs
@@ -141,9 +141,11 @@ if st.sidebar.button("Generate Schedule"):
                 }
                 schedule_func = logic_map[algorithm_choice]
                 schedule_output = schedule_func(store_open_dt.time(), store_close_dt.time(), employee_data_list)
+                
                 st.success("Schedule Generated!")
                 st.subheader("Generated Schedule")
                 note, csv_data = (schedule_output.split('\n\n', 1) if "NOTE:" in schedule_output else ("", schedule_output))
                 if note: st.info(note)
+                
                 st.dataframe(pd.read_csv(StringIO(csv_data)))
                 st.download_button("Download Schedule", csv_data, "schedule.csv", "text/csv")
