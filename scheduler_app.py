@@ -3,13 +3,13 @@ import streamlit as st
 import pandas as pd
 from datetime import time, datetime
 from io import StringIO
-# Import all five scheduling functions
+# Import all scheduling functions
 from scheduler_logic import (
     create_schedule_simple, 
     create_schedule_heuristic, 
     create_schedule_backtracking_classic,
     create_schedule_phoenix,
-    create_schedule_rotational, 
+    create_schedule_phoenix_limited, # Import the new limited break function
     parse_time_input
 )
 
@@ -64,13 +64,17 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-# --- UPDATED: Algorithm Selector with five options ---
+# --- UPDATED: Algorithm Selector with the new limited breaks option ---
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
-    ('Backtracking (Phoenix Edition)', 'Backtracking (Classic)', 'Heuristic (Conductor First)', 'Rotational', 'Simple'),
-    index=0, # Default to the new Phoenix Edition
-    help="Phoenix is the most advanced, Classic is a reliable fallback."
+    ('Backtracking (Phoenix Edition)', 
+     'Phoenix (Limited Conductor Breaks)', # New Option
+     'Backtracking (Classic)', 
+     'Heuristic (Conductor First)', 
+     'Simple'),
+    index=0, 
+    help="Phoenix is the most advanced. Limited Breaks allows breaking the conductor rule up to twice."
 )
 
 # Store Hours & Employee Inputs
@@ -133,10 +137,10 @@ if st.sidebar.button("Generate Schedule"):
         else:
             with st.spinner(f"Generating with {algorithm_choice.split(' ')[0]} logic..."):
                 logic_map = {
-                    'Rotational': create_schedule_rotational,
                     'Simple': create_schedule_simple,
                     'Heuristic (Conductor First)': create_schedule_heuristic,
                     'Backtracking (Phoenix Edition)': create_schedule_phoenix,
+                    'Phoenix (Limited Conductor Breaks)': create_schedule_phoenix_limited,
                     'Backtracking (Classic)': create_schedule_backtracking_classic
                 }
                 schedule_func = logic_map[algorithm_choice]
