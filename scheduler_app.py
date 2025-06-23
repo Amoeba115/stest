@@ -3,11 +3,12 @@ import streamlit as st
 import pandas as pd
 from datetime import time, datetime
 from io import StringIO
-# Import all six scheduling functions
+# Import all five scheduling functions
 from scheduler_logic import (
     create_schedule_simple, 
     create_schedule_heuristic, 
-    create_schedule_rotational, 
+    create_schedule_rotational,
+    create_schedule_backtracking_optimized,
     create_schedule_backtracking_classic,
     create_schedule_phoenix,
     parse_time_input
@@ -64,12 +65,13 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-# --- UPDATED: Algorithm Selector with six options ---
+# --- UPDATED: Algorithm Selector with all options ---
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
-    ('Backtracking (Phoenix Edition)', 'Backtracking (Classic)', 'Heuristic (Conductor First)', 'Rotational', 'Simple'),
-    help="Phoenix Edition is the most advanced and balanced solver."
+    ('Backtracking (Phoenix Edition)', 'Backtracking (Classic)', 'Backtracking (Optimized)', 'Heuristic (Conductor First)', 'Rotational', 'Simple'),
+    index=0, # Default to the new Phoenix Edition
+    help="Phoenix is the most advanced, Classic is a reliable fallback."
 )
 
 # Store Hours & Employee Inputs
@@ -135,7 +137,7 @@ if st.sidebar.button("Generate Schedule"):
                     'Rotational': create_schedule_rotational,
                     'Simple': create_schedule_simple,
                     'Heuristic (Conductor First)': create_schedule_heuristic,
-                    'Backtracking (Optimized)': create_schedule_backtracking_optimized, # This is the pruned one that may fail
+                    'Backtracking (Optimized)': create_schedule_backtracking_optimized,
                     'Backtracking (Classic)': create_schedule_backtracking_classic,
                     'Backtracking (Phoenix Edition)': create_schedule_phoenix
                 }
@@ -149,4 +151,3 @@ if st.sidebar.button("Generate Schedule"):
                 
                 st.dataframe(pd.read_csv(StringIO(csv_data)))
                 st.download_button("Download Schedule", csv_data, "schedule.csv", "text/csv")
-                
