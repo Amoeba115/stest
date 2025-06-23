@@ -10,7 +10,7 @@ from itertools import permutations
 # ==============================================================================
 
 FINAL_SCHEDULE_ROW_ORDER = [
-    "Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Expo", 
+    "Handout", "Line Buster 1", "Conductor", "Line Buster 2", "Expo",
     "Drink Maker 1", "Drink Maker 2", "Line Buster 3", "Break", "ToffTL"
 ]
 WORK_POSITIONS = [p for p in FINAL_SCHEDULE_ROW_ORDER if p not in ["Break", "ToffTL"]]
@@ -153,7 +153,7 @@ def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employe
 # ==============================================================================
 # SECTION 4: BACKTRACKING (PHOENIX EDITION)
 # ==============================================================================
-def calculate_assignment_cost(pos, emp, prev_state):
+def calculate_assignment_cost(pos, emp, prev_state, slot_obj):
     cost = 0
     last_pos, time_in_pos = prev_state.get('last_pos'), prev_state.get('time_in_pos', 0)
     last_top_tier = prev_state.get('last_top_tier', 100)
@@ -162,6 +162,8 @@ def calculate_assignment_cost(pos, emp, prev_state):
     if len(history) >= 3 and history[-2] == pos: cost += 5
     if pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES: cost += 1000
     if pos in TOP_TIER_ROLES: cost -= last_top_tier
+    if pos == 'Conductor' and prev_state.get('last_pos') != 'Conductor' and slot_obj.minute != 0:
+        cost += 500 # Make it a high-cost violation
     return cost
 
 def solve_phoenix_recursive(time_idx, time_slots, availability, schedule, prev_states):
@@ -177,11 +179,10 @@ def solve_phoenix_recursive(time_idx, time_slots, availability, schedule, prev_s
             state = prev_states.get(emp, {})
             last_pos, time_in_pos = state.get('last_pos'), state.get('time_in_pos', 0)
             if (pos == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
-               (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2) or \
-               (pos == 'Conductor' and last_pos != 'Conductor' and slot_obj.minute != 0):
+               (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2):
                 is_valid = False
                 break
-            current_cost += calculate_assignment_cost(pos, emp, state)
+            current_cost += calculate_assignment_cost(pos, emp, state, slot_obj)
         if not is_valid: continue
         new_states = copy.deepcopy(prev_states)
         for pos, emp in assignments.items():
@@ -206,6 +207,7 @@ def create_schedule_phoenix(store_open_time_obj, store_close_time_obj, employee_
     if final_assignments is None: return "Could not find a valid schedule that meets all hard rules."
     note = ""
     if total_cost >= 1000: note = "NOTE: A valid schedule was only found by relaxing the consecutive Line Buster rule.\n\n"
+    if total_cost >= 500 and total_cost < 1000: note = "NOTE: A valid schedule was only found by relaxing the Conductor start time rule.\n\n"
     rows = []
     for i, slot_str in enumerate(time_slots):
         row = {"Time": slot_str, **final_assignments[i]}
