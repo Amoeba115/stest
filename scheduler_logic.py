@@ -166,15 +166,27 @@ def calculate_assignment_cost(pos, emp, prev_state, slot_obj):
         cost += 500 # Make it a high-cost violation
     return cost
 
-def solve_phoenix_recursive(time_idx, time_slots, availability, schedule, prev_states):
+def solve_phoenix_recursive(time_idx, time_slots, availability, schedule, prev_states, best_cost_so_far):
     if time_idx >= len(time_slots): return 0, schedule
     slot_str, slot_obj = time_slots[time_idx], parse_time_input(time_slots[time_idx], datetime(1970,1,1).date())
     avail_emps = availability.get(slot_str, [])
     positions_to_fill = WORK_POSITIONS[:len(avail_emps)]
     if len(positions_to_fill) != len(avail_emps): return float('inf'), None
-    best_cost, best_schedule_for_rest_of_day = float('inf'), None
+    
+    best_cost_at_level = best_cost_so_far
+    best_schedule_for_rest_of_day = None
+
     for p in permutations(avail_emps):
         assignments, current_cost, is_valid = {pos: emp for pos, emp in zip(positions_to_fill, p)}, 0, True
+        
+        # --- Start Cost Calculation and Pruning ---
+        for pos, emp in assignments.items():
+            current_cost += calculate_assignment_cost(pos, emp, prev_states.get(emp, {}), slot_obj)
+        
+        if current_cost >= best_cost_at_level:
+            continue
+        # --- End Cost Calculation and Pruning ---
+
         for pos, emp in assignments.items():
             state = prev_states.get(emp, {})
             last_pos, time_in_pos = state.get('last_pos'), state.get('time_in_pos', 0)
@@ -182,32 +194,43 @@ def solve_phoenix_recursive(time_idx, time_slots, availability, schedule, prev_s
                (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2):
                 is_valid = False
                 break
-            current_cost += calculate_assignment_cost(pos, emp, state, slot_obj)
         if not is_valid: continue
+
         new_states = copy.deepcopy(prev_states)
         for pos, emp in assignments.items():
             history = new_states.get(emp, {}).get('history', [])
             new_history = (history + [pos])[-4:]
             time_in_top_tier = 0 if pos in TOP_TIER_ROLES else new_states.get(emp, {}).get('last_top_tier', 100) + 1
             new_states[emp] = {'last_pos': pos, 'time_in_pos': (prev_states.get(emp,{}).get('time_in_pos',0)+1 if prev_states.get(emp,{}).get('last_pos')==pos else 1), 'history': new_history, 'last_top_tier': time_in_top_tier}
-        future_cost, resulting_schedule = solve_phoenix_recursive(time_idx + 1, time_slots, availability, schedule, new_states)
+        
+        future_cost, resulting_schedule = solve_phoenix_recursive(time_idx + 1, time_slots, availability, schedule, new_states, best_cost_at_level - current_cost)
+        
         if future_cost != float('inf'):
             total_cost = current_cost + future_cost
-            if total_cost < best_cost:
-                best_cost, resulting_schedule[time_idx] = total_cost, assignments
+            if total_cost < best_cost_at_level:
+                best_cost_at_level = total_cost
+                resulting_schedule[time_idx] = assignments
                 best_schedule_for_rest_of_day = resulting_schedule
-    return best_cost, best_schedule_for_rest_of_day
+
+    if best_schedule_for_rest_of_day is None:
+        return float('inf'), None
+
+    return best_cost_at_level, best_schedule_for_rest_of_day
 
 def create_schedule_phoenix(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
     availability = {t: list(g['EmployeeNameFML']) for t, g in df_long[~df_long['IsOnBreak'] & ~df_long['IsOnToffTL']].groupby('Time')}
-    total_cost, final_assignments = solve_phoenix_recursive(0, time_slots, availability, [{} for _ in time_slots], {})
+    
+    total_cost, final_assignments = solve_phoenix_recursive(0, time_slots, availability, [{} for _ in time_slots], {}, float('inf'))
+
     if final_assignments is None: return "Could not find a valid schedule that meets all hard rules."
+    
     note = ""
     if total_cost >= 1000: note = "NOTE: A valid schedule was only found by relaxing the consecutive Line Buster rule.\n\n"
     if total_cost >= 500 and total_cost < 1000: note = "NOTE: A valid schedule was only found by relaxing the Conductor start time rule.\n\n"
+    
     rows = []
     for i, slot_str in enumerate(time_slots):
         row = {"Time": slot_str, **final_assignments[i]}
