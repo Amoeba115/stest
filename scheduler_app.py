@@ -5,11 +5,11 @@ from datetime import time, datetime
 from io import StringIO
 # Import all scheduling functions
 from scheduler_logic import (
-    create_schedule_simple, 
     create_schedule_heuristic, 
     create_schedule_backtracking_classic,
     create_schedule_phoenix,
-    create_schedule_phoenix_limited, # Import the new limited break function
+    create_schedule_phoenix_limited,
+    create_schedule_classic_limited, # Import the new classic limited function
     parse_time_input
 )
 
@@ -64,15 +64,15 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-# --- UPDATED: Algorithm Selector with the new limited breaks option ---
+# --- UPDATED: Algorithm Selector with the new limited breaks options ---
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
     ('Backtracking (Phoenix Edition)', 
-     'Phoenix (Limited Conductor Breaks)', # New Option
+     'Phoenix (Limited Conductor Breaks)',
      'Backtracking (Classic)', 
-     'Heuristic (Conductor First)', 
-     'Simple'),
+     'Classic (Limited Conductor Breaks)', # New Classic Option
+     'Heuristic (Conductor First)'),
     index=0, 
     help="Phoenix is the most advanced. Limited Breaks allows breaking the conductor rule up to twice."
 )
@@ -137,11 +137,11 @@ if st.sidebar.button("Generate Schedule"):
         else:
             with st.spinner(f"Generating with {algorithm_choice.split(' ')[0]} logic..."):
                 logic_map = {
-                    'Simple': create_schedule_simple,
                     'Heuristic (Conductor First)': create_schedule_heuristic,
                     'Backtracking (Phoenix Edition)': create_schedule_phoenix,
                     'Phoenix (Limited Conductor Breaks)': create_schedule_phoenix_limited,
-                    'Backtracking (Classic)': create_schedule_backtracking_classic
+                    'Backtracking (Classic)': create_schedule_backtracking_classic,
+                    'Classic (Limited Conductor Breaks)': create_schedule_classic_limited
                 }
                 schedule_func = logic_map[algorithm_choice]
                 schedule_output = schedule_func(store_open_dt.time(), store_close_dt.time(), employee_data_list)
