@@ -7,10 +7,9 @@ from io import StringIO
 from scheduler_logic import (
     create_schedule_simple, 
     create_schedule_heuristic, 
-    create_schedule_rotational,
-    create_schedule_backtracking_optimized,
     create_schedule_backtracking_classic,
     create_schedule_phoenix,
+    create_schedule_rotational, 
     parse_time_input
 )
 
@@ -65,11 +64,11 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-# --- UPDATED: Algorithm Selector with all options ---
+# --- UPDATED: Algorithm Selector with five options ---
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
-    ('Backtracking (Phoenix Edition)', 'Backtracking (Classic)', 'Backtracking (Optimized)', 'Heuristic (Conductor First)', 'Rotational', 'Simple'),
+    ('Backtracking (Phoenix Edition)', 'Backtracking (Classic)', 'Heuristic (Conductor First)', 'Rotational', 'Simple'),
     index=0, # Default to the new Phoenix Edition
     help="Phoenix is the most advanced, Classic is a reliable fallback."
 )
@@ -137,9 +136,8 @@ if st.sidebar.button("Generate Schedule"):
                     'Rotational': create_schedule_rotational,
                     'Simple': create_schedule_simple,
                     'Heuristic (Conductor First)': create_schedule_heuristic,
-                    'Backtracking (Optimized)': create_schedule_backtracking_optimized,
-                    'Backtracking (Classic)': create_schedule_backtracking_classic,
-                    'Backtracking (Phoenix Edition)': create_schedule_phoenix
+                    'Backtracking (Phoenix Edition)': create_schedule_phoenix,
+                    'Backtracking (Classic)': create_schedule_backtracking_classic
                 }
                 schedule_func = logic_map[algorithm_choice]
                 schedule_output = schedule_func(store_open_dt.time(), store_close_dt.time(), employee_data_list)
