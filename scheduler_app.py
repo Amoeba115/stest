@@ -3,13 +3,13 @@ import streamlit as st
 import pandas as pd
 from datetime import time, datetime
 from io import StringIO
-# Import all five scheduling functions
+# Import all six scheduling functions
 from scheduler_logic import (
     create_schedule_simple, 
     create_schedule_heuristic, 
-    create_schedule_backtracking_optimized, 
-    create_schedule_backtracking_classic,
     create_schedule_rotational, 
+    create_schedule_backtracking_classic,
+    create_schedule_phoenix,
     parse_time_input
 )
 
@@ -64,13 +64,12 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-# --- UPDATED: Algorithm Selector with five options ---
+# --- UPDATED: Algorithm Selector with six options ---
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
-    ('Rotational', 'Simple', 'Heuristic (Conductor First)', 'Backtracking (Optimized)', 'Backtracking (Classic)'),
-    index=4, # Default to classic backtracking
-    help="Classic Backtracking is a reliable solver. Optimized is faster but may fail more often."
+    ('Backtracking (Phoenix Edition)', 'Backtracking (Classic)', 'Heuristic (Conductor First)', 'Rotational', 'Simple'),
+    help="Phoenix Edition is the most advanced and balanced solver."
 )
 
 # Store Hours & Employee Inputs
@@ -136,8 +135,9 @@ if st.sidebar.button("Generate Schedule"):
                     'Rotational': create_schedule_rotational,
                     'Simple': create_schedule_simple,
                     'Heuristic (Conductor First)': create_schedule_heuristic,
-                    'Backtracking (Optimized)': create_schedule_backtracking_optimized,
-                    'Backtracking (Classic)': create_schedule_backtracking_classic
+                    'Backtracking (Optimized)': create_schedule_backtracking_optimized, # This is the pruned one that may fail
+                    'Backtracking (Classic)': create_schedule_backtracking_classic,
+                    'Backtracking (Phoenix Edition)': create_schedule_phoenix
                 }
                 schedule_func = logic_map[algorithm_choice]
                 schedule_output = schedule_func(store_open_dt.time(), store_close_dt.time(), employee_data_list)
@@ -149,3 +149,4 @@ if st.sidebar.button("Generate Schedule"):
                 
                 st.dataframe(pd.read_csv(StringIO(csv_data)))
                 st.download_button("Download Schedule", csv_data, "schedule.csv", "text/csv")
+                
