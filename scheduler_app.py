@@ -10,7 +10,7 @@ from scheduler_logic import (
     create_schedule_phoenix,
     create_schedule_phoenix_limited,
     create_schedule_classic_limited,
-    create_schedule_phoenix_diverse, # This will now use the improved logic
+    create_schedule_phoenix_diverse,
     parse_time_input
 )
 
