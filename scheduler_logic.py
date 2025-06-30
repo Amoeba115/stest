@@ -380,36 +380,51 @@ def create_schedule_classic_limited(store_open_time_obj, store_close_time_obj, e
 # ==============================================================================
 # SECTION 7: PHOENIX (DIVERSE)
 # ==============================================================================
-def is_assignment_still_valid(employee_name, new_position, time_slot_index, schedule_df):
-    if time_slot_index == 0:
-        return True # No previous state to violate
+def is_swap_safe(df, time_idx, emp1_name, emp2_name, pos1, pos2):
+    """
+    Checks if swapping two employees at a given time slot violates any hard rules for either employee.
+    It checks the state before and after the swap.
+    """
+    def check_employee_validity(emp_name, new_pos, current_time_idx):
+        # Check against the previous time slot
+        if current_time_idx > 0:
+            prev_slot_col = df.columns[current_time_idx - 1]
+            last_pos_series = df[prev_slot_col][df[prev_slot_col] == emp_name]
+            if not last_pos_series.empty:
+                last_pos = last_pos_series.index[0]
+                
+                # Rule: Can't be in the same Line Buster role twice
+                if new_pos in LINE_BUSTER_ROLES and new_pos == last_pos:
+                    return False
 
-    # Get the state from the previous time slot
-    prev_slot = schedule_df.columns[time_slot_index - 1]
-    last_pos = schedule_df.loc[schedule_df[prev_slot] == employee_name].index.astype(str).tolist()
-    if not last_pos: # Employee might have just started
-        return True 
-    last_pos = last_pos[0]
-
-    # Calculate time_in_pos
-    time_in_pos = 0
-    for i in range(time_slot_index, -1, -1):
-        current_slot_pos = schedule_df.loc[schedule_df[schedule_df.columns[i]] == employee_name].index.astype(str).tolist()
-        if current_slot_pos and current_slot_pos[0] == last_pos:
-            time_in_pos += 1
-        else:
-            break
-    
-    # Check hard rules from Phoenix logic
-    if (new_position == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
-       (new_position not in LINE_BUSTER_ROLES and new_position != 'Conductor' and last_pos == new_position and time_in_pos >= 2):
-        return False
+                # Rule: Can't be in the same non-Conductor, non-LB role for more than 2 slots
+                if new_pos not in LINE_BUSTER_ROLES and new_pos != 'Conductor' and new_pos == last_pos:
+                    if current_time_idx > 1:
+                        prev_prev_slot_col = df.columns[current_time_idx - 2]
+                        prev_prev_pos_series = df[prev_prev_slot_col][df[prev_prev_slot_col] == emp_name]
+                        if not prev_prev_pos_series.empty and prev_prev_pos_series.index[0] == new_pos:
+                            return False
         
-    return True
+        # Check against the next time slot
+        if current_time_idx < len(df.columns) - 1:
+            next_slot_col = df.columns[current_time_idx + 1]
+            next_pos_series = df[next_slot_col][df[next_slot_col] == emp_name]
+            if not next_pos_series.empty:
+                next_pos = next_pos_series.index[0]
+
+                # Rule: Can't be in the same Line Buster role twice
+                if next_pos in LINE_BUSTER_ROLES and next_pos == new_pos:
+                    return False
+        
+        return True
+
+    # After the swap, emp1 will be in pos2 and emp2 will be in pos1.
+    # Check if this new state is valid for both employees.
+    return check_employee_validity(emp1_name, pos2, time_idx) and check_employee_validity(emp2_name, pos1, time_idx)
 
 def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, employee_data_list):
     # 1. Generate the initial schedule using the standard Phoenix logic
-    initial_schedule_csv = create_schedule_phoenix(store_open_time_obj, store_close_time_obj, employee_data_list)
+    initial_schedule_csv = create_schedule_phoenix(store_open_time_obj, store_close_time_obj, employee__data_list)
     if "Could not find" in initial_schedule_csv:
         return initial_schedule_csv
 
@@ -419,45 +434,44 @@ def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, e
     df = df.set_index('Position')
 
     # 2. Post-processing for diversity
-    for i in range(len(df.columns)): # Iterate through each time slot
-        time_slot = df.columns[i]
-        
-        for emp_name in df[time_slot].dropna().unique():
-            if emp_name == "": continue
+    for _ in range(2): # Run the diversity pass twice to catch more issues
+        for i in range(len(df.columns)): # Iterate through each time slot
+            time_slot = df.columns[i]
             
-            # Define a 2-hour window (4 slots) to check for diversity
-            window_start = max(0, i - 3)
-            window_end = i + 1
-            window_slots = df.columns[window_start:window_end]
-            
-            emp_positions_in_window = []
-            for slot in window_slots:
-                pos = df.loc[df[slot] == emp_name].index.astype(str).tolist()
-                if pos:
-                    emp_positions_in_window.append(pos[0])
-
-            current_pos = emp_positions_in_window[-1]
-            if current_pos == 'Conductor':
-                continue # Do not move the conductor
-
-            # Check if a position is repeated too frequently
-            if emp_positions_in_window.count(current_pos) >= 2:
-                # This employee is in a repetitive, non-diverse pattern. Look for a swap.
+            for emp_name in df[time_slot].dropna().unique():
+                if emp_name == "": continue
                 
-                # Try to swap with Drink Maker 1, as it's often a safe swap
-                target_pos_to_swap = 'Drink Maker 1'
-                if target_pos_to_swap in df.index:
-                    dm_emp = df.loc[target_pos_to_swap, time_slot]
-                    if pd.notna(dm_emp) and dm_emp != emp_name:
-                        # Check if swapping is valid for BOTH employees
-                        is_emp1_valid = is_assignment_still_valid(emp_name, target_pos_to_swap, i, df)
-                        is_emp2_valid = is_assignment_still_valid(dm_emp, current_pos, i, df)
+                # Define a 2-hour window (4 slots) to check for diversity
+                window_start = max(0, i - 3)
+                window_end = i + 1
+                window_slots = df.columns[window_start:window_end]
+                
+                emp_positions_in_window = []
+                for slot in window_slots:
+                    pos_series = df[slot][df[slot] == emp_name]
+                    if not pos_series.empty:
+                        emp_positions_in_window.append(pos_series.index[0])
 
-                        if is_emp1_valid and is_emp2_valid:
-                            # Perform the swap
-                            df.loc[current_pos, time_slot] = dm_emp
-                            df.loc[target_pos_to_swap, time_slot] = emp_name
-                            note += "Schedule adjusted for diversity. "
-                            break # Move to the next employee
+                current_pos = emp_positions_in_window[-1] if emp_positions_in_window else None
+                if not current_pos or current_pos == 'Conductor':
+                    continue
+
+                # Check for repetitive assignments (same position more than once in the window)
+                if emp_positions_in_window.count(current_pos) > 1:
+                    # Found a non-diverse pattern. Try to swap with a Drink Maker.
+                    for target_pos_to_swap in ['Drink Maker 1', 'Drink Maker 2']:
+                        if target_pos_to_swap in df.index:
+                            dm_emp = df.loc[target_pos_to_swap, time_slot]
+                            if pd.notna(dm_emp) and dm_emp != emp_name:
+                                # Check if swapping is safe for BOTH employees
+                                if is_swap_safe(df, i, emp_name, dm_emp, current_pos, target_pos_to_swap):
+                                    # Perform the swap
+                                    df.loc[current_pos, time_slot] = dm_emp
+                                    df.loc[target_pos_to_swap, time_slot] = emp_name
+                                    note += "Schedule adjusted for diversity. "
+                                    break # Move to the next potential issue
+                    else:
+                        continue
+                    break
     
     return note.strip() + "\n\n" + df.reset_index().to_csv(index=False)
