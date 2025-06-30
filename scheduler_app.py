@@ -9,7 +9,8 @@ from scheduler_logic import (
     create_schedule_backtracking_classic,
     create_schedule_phoenix,
     create_schedule_phoenix_limited,
-    create_schedule_classic_limited, # Import the new classic limited function
+    create_schedule_classic_limited,
+    create_schedule_phoenix_diverse, # Import the new diverse function
     parse_time_input
 )
 
@@ -64,17 +65,18 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-# --- UPDATED: Algorithm Selector with the new limited breaks options ---
+# --- UPDATED: Algorithm Selector with the new diverse option ---
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
-    ('Backtracking (Phoenix Edition)', 
+    ('Backtracking Phoenix (Diverse)',
+     'Backtracking (Phoenix Edition)', 
      'Phoenix (Limited Conductor Breaks)',
      'Backtracking (Classic)', 
-     'Classic (Limited Conductor Breaks)', # New Classic Option
+     'Classic (Limited Conductor Breaks)',
      'Heuristic (Conductor First)'),
     index=0, 
-    help="Phoenix is the most advanced. Limited Breaks allows breaking the conductor rule up to twice."
+    help="Phoenix is the most advanced. Diverse adds a post-processing step to improve variety."
 )
 
 # Store Hours & Employee Inputs
@@ -141,7 +143,8 @@ if st.sidebar.button("Generate Schedule"):
                     'Backtracking (Phoenix Edition)': create_schedule_phoenix,
                     'Phoenix (Limited Conductor Breaks)': create_schedule_phoenix_limited,
                     'Backtracking (Classic)': create_schedule_backtracking_classic,
-                    'Classic (Limited Conductor Breaks)': create_schedule_classic_limited
+                    'Classic (Limited Conductor Breaks)': create_schedule_classic_limited,
+                    'Backtracking Phoenix (Diverse)': create_schedule_phoenix_diverse
                 }
                 schedule_func = logic_map[algorithm_choice]
                 schedule_output = schedule_func(store_open_dt.time(), store_close_dt.time(), employee_data_list)
