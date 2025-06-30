@@ -10,7 +10,7 @@ from scheduler_logic import (
     create_schedule_phoenix,
     create_schedule_phoenix_limited,
     create_schedule_classic_limited,
-    create_schedule_phoenix_diverse, # Import the new diverse function
+    create_schedule_phoenix_diverse, # This will now use the improved logic
     parse_time_input
 )
 
@@ -65,7 +65,7 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-# --- UPDATED: Algorithm Selector with the new diverse option ---
+# --- Algorithm Selector ---
 st.sidebar.markdown('<h3 style="color: #f03c4c;">Algorithm</h3>', unsafe_allow_html=True)
 algorithm_choice = st.sidebar.radio(
     "Select the scheduling logic:",
