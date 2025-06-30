@@ -415,14 +415,18 @@ def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, e
     df = pd.read_csv(StringIO(csv_data))
     df = df.set_index('Position')
 
-    for _ in range(2): 
+    swaps_made = 0
+    for _ in range(5): # Loop multiple times to catch cascading swap opportunities
+        made_a_swap_this_pass = False
         for i in range(len(df.columns)): 
             time_slot = df.columns[i]
             for emp_name in df[time_slot].dropna().unique():
                 if emp_name == "": continue
+                
                 window_start = max(0, i - 3)
                 window_end = i + 1
                 window_slots = df.columns[window_start:window_end]
+                
                 emp_positions_in_window = []
                 for slot in window_slots:
                     pos_series = df[slot][df[slot] == emp_name]
@@ -432,18 +436,26 @@ def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, e
                 current_pos = emp_positions_in_window[-1] if emp_positions_in_window else None
                 if not current_pos or current_pos == 'Conductor':
                     continue
+
                 if emp_positions_in_window.count(current_pos) > 1:
-                    for target_pos_to_swap in ['Drink Maker 1', 'Drink Maker 2']:
-                        if target_pos_to_swap in df.index:
-                            dm_emp = df.loc[target_pos_to_swap, time_slot]
-                            if pd.notna(dm_emp) and dm_emp != emp_name:
-                                if is_swap_safe(df, i, emp_name, dm_emp, current_pos, target_pos_to_swap):
-                                    df.loc[current_pos, time_slot] = dm_emp
-                                    df.loc[target_pos_to_swap, time_slot] = emp_name
-                                    note += "Schedule adjusted for diversity. "
-                                    break 
-                    else:
-                        continue
-                    break
+                    # Found a repetitive pattern. Try to swap with ANY other employee.
+                    for other_pos in df.index:
+                        if other_pos == current_pos or other_pos in ['Break', 'ToffTL']: continue
+                        
+                        other_emp = df.loc[other_pos, time_slot]
+                        if pd.notna(other_emp) and other_emp != emp_name:
+                            if is_swap_safe(df, i, emp_name, other_emp, current_pos, other_pos):
+                                df.loc[current_pos, time_slot] = other_emp
+                                df.loc[other_pos, time_slot] = emp_name
+                                swaps_made += 1
+                                made_a_swap_this_pass = True
+                                break # Move to next employee
+                    if made_a_swap_this_pass:
+                        break # Move to next time slot
+            if made_a_swap_this_pass:
+                break # Restart the pass
     
+    if swaps_made > 0:
+        note += f"{swaps_made} diversity swaps made. "
+
     return note.strip() + "\n\n" + df.reset_index().to_csv(index=False)
