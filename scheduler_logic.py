@@ -332,14 +332,12 @@ def solve_classic_limited_breaks_recursive(time_idx, time_slots, availability, s
         for pos, emp in assignments.items():
             last_pos, time_in_pos = states.get(emp, {}).get('last_pos'), states.get(emp, {}).get('time_in_pos', 0)
             
-            # Check hard rules that can never be broken
             if (pos in LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 1) or \
                (pos == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
                (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2):
                 is_valid = False
                 break
             
-            # Check the conductor rule that we can break
             if pos == 'Conductor' and last_pos != 'Conductor' and slot_obj.minute != 0:
                 current_breaks += 1
 
@@ -378,3 +376,88 @@ def create_schedule_classic_limited(store_open_time_obj, store_close_time_obj, e
         rows.append(row)
     out_df = pd.DataFrame(rows, columns=["Time"] + FINAL_SCHEDULE_ROW_ORDER).set_index("Time").fillna("").transpose().reset_index().rename(columns={'index':'Position'})
     return note + out_df.to_csv(index=False)
+
+# ==============================================================================
+# SECTION 7: PHOENIX (DIVERSE)
+# ==============================================================================
+def is_assignment_still_valid(employee_name, new_position, time_slot_index, schedule_df):
+    if time_slot_index == 0:
+        return True # No previous state to violate
+
+    # Get the state from the previous time slot
+    prev_slot = schedule_df.columns[time_slot_index - 1]
+    last_pos = schedule_df.loc[schedule_df[prev_slot] == employee_name].index.astype(str).tolist()
+    if not last_pos: # Employee might have just started
+        return True 
+    last_pos = last_pos[0]
+
+    # Calculate time_in_pos
+    time_in_pos = 0
+    for i in range(time_slot_index, -1, -1):
+        current_slot_pos = schedule_df.loc[schedule_df[schedule_df.columns[i]] == employee_name].index.astype(str).tolist()
+        if current_slot_pos and current_slot_pos[0] == last_pos:
+            time_in_pos += 1
+        else:
+            break
+    
+    # Check hard rules from Phoenix logic
+    if (new_position == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
+       (new_position not in LINE_BUSTER_ROLES and new_position != 'Conductor' and last_pos == new_position and time_in_pos >= 2):
+        return False
+        
+    return True
+
+def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, employee_data_list):
+    # 1. Generate the initial schedule using the standard Phoenix logic
+    initial_schedule_csv = create_schedule_phoenix(store_open_time_obj, store_close_time_obj, employee_data_list)
+    if "Could not find" in initial_schedule_csv:
+        return initial_schedule_csv
+
+    note, csv_data = (initial_schedule_csv.split('\n\n', 1) if "NOTE:" in initial_schedule_csv else ("", initial_schedule_csv))
+    
+    df = pd.read_csv(StringIO(csv_data))
+    df = df.set_index('Position')
+
+    # 2. Post-processing for diversity
+    for i in range(len(df.columns)): # Iterate through each time slot
+        time_slot = df.columns[i]
+        
+        for emp_name in df[time_slot].dropna().unique():
+            if emp_name == "": continue
+            
+            # Define a 2-hour window (4 slots) to check for diversity
+            window_start = max(0, i - 3)
+            window_end = i + 1
+            window_slots = df.columns[window_start:window_end]
+            
+            emp_positions_in_window = []
+            for slot in window_slots:
+                pos = df.loc[df[slot] == emp_name].index.astype(str).tolist()
+                if pos:
+                    emp_positions_in_window.append(pos[0])
+
+            current_pos = emp_positions_in_window[-1]
+            if current_pos == 'Conductor':
+                continue # Do not move the conductor
+
+            # Check if a position is repeated too frequently
+            if emp_positions_in_window.count(current_pos) >= 2:
+                # This employee is in a repetitive, non-diverse pattern. Look for a swap.
+                
+                # Try to swap with Drink Maker 1, as it's often a safe swap
+                target_pos_to_swap = 'Drink Maker 1'
+                if target_pos_to_swap in df.index:
+                    dm_emp = df.loc[target_pos_to_swap, time_slot]
+                    if pd.notna(dm_emp) and dm_emp != emp_name:
+                        # Check if swapping is valid for BOTH employees
+                        is_emp1_valid = is_assignment_still_valid(emp_name, target_pos_to_swap, i, df)
+                        is_emp2_valid = is_assignment_still_valid(dm_emp, current_pos, i, df)
+
+                        if is_emp1_valid and is_emp2_valid:
+                            # Perform the swap
+                            df.loc[current_pos, time_slot] = dm_emp
+                            df.loc[target_pos_to_swap, time_slot] = emp_name
+                            note += "Schedule adjusted for diversity. "
+                            break # Move to the next employee
+    
+    return note.strip() + "\n\n" + df.reset_index().to_csv(index=False)
