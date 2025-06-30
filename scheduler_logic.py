@@ -416,14 +416,15 @@ def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, e
     df = df.set_index('Position')
 
     swaps_made = 0
-    for _ in range(5): # Loop multiple times to catch cascading swap opportunities
+    for _ in range(5): 
         made_a_swap_this_pass = False
         for i in range(len(df.columns)): 
             time_slot = df.columns[i]
             for emp_name in df[time_slot].dropna().unique():
                 if emp_name == "": continue
                 
-                window_start = max(0, i - 3)
+                # Check a wider, 3-hour window for "on-off-on" patterns
+                window_start = max(0, i - 5) 
                 window_end = i + 1
                 window_slots = df.columns[window_start:window_end]
                 
@@ -432,13 +433,23 @@ def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, e
                     pos_series = df[slot][df[slot] == emp_name]
                     if not pos_series.empty:
                         emp_positions_in_window.append(pos_series.index[0])
+                    else:
+                        emp_positions_in_window.append(None) # Add a placeholder for time off
 
                 current_pos = emp_positions_in_window[-1] if emp_positions_in_window else None
                 if not current_pos or current_pos == 'Conductor':
                     continue
 
+                # Check for "on-off-on" patterns
+                is_repetitive = False
+                if len(emp_positions_in_window) >= 3 and emp_positions_in_window[-1] == emp_positions_in_window[-3]:
+                    is_repetitive = True
+                
+                # Check for simple repetition
                 if emp_positions_in_window.count(current_pos) > 1:
-                    # Found a repetitive pattern. Try to swap with ANY other employee.
+                    is_repetitive = True
+                
+                if is_repetitive:
                     for other_pos in df.index:
                         if other_pos == current_pos or other_pos in ['Break', 'ToffTL']: continue
                         
@@ -449,11 +460,11 @@ def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, e
                                 df.loc[other_pos, time_slot] = emp_name
                                 swaps_made += 1
                                 made_a_swap_this_pass = True
-                                break # Move to next employee
+                                break 
                     if made_a_swap_this_pass:
-                        break # Move to next time slot
+                        break
             if made_a_swap_this_pass:
-                break # Restart the pass
+                break
     
     if swaps_made > 0:
         note += f"{swaps_made} diversity swaps made. "
