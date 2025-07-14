@@ -423,7 +423,6 @@ def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, e
             for emp_name in df[time_slot].dropna().unique():
                 if emp_name == "": continue
                 
-                # Check a wider, 3-hour window for "on-off-on" patterns
                 window_start = max(0, i - 5) 
                 window_end = i + 1
                 window_slots = df.columns[window_start:window_end]
@@ -434,18 +433,16 @@ def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, e
                     if not pos_series.empty:
                         emp_positions_in_window.append(pos_series.index[0])
                     else:
-                        emp_positions_in_window.append(None) # Add a placeholder for time off
+                        emp_positions_in_window.append(None) 
 
                 current_pos = emp_positions_in_window[-1] if emp_positions_in_window else None
                 if not current_pos or current_pos == 'Conductor':
                     continue
 
-                # Check for "on-off-on" patterns
                 is_repetitive = False
                 if len(emp_positions_in_window) >= 3 and emp_positions_in_window[-1] == emp_positions_in_window[-3]:
                     is_repetitive = True
                 
-                # Check for simple repetition
                 if emp_positions_in_window.count(current_pos) > 1:
                     is_repetitive = True
                 
