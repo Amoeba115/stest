@@ -1,8 +1,7 @@
-# File: scheduler_logic.py
+# File: scheduler_logic.py (Optimized Version)
 import pandas as pd
 from io import StringIO
 from datetime import datetime, time
-import copy
 from itertools import permutations
 
 # ==============================================================================
@@ -41,7 +40,7 @@ def preprocess_employee_data(employee_data_list):
     return pd.DataFrame(all_slots) if all_slots else pd.DataFrame()
 
 # ==============================================================================
-# SECTION 2: HEURISTIC (CONDUCTOR FIRST) SCHEDULER
+# SECTION 2: HEURISTIC (CONDUCTOR FIRST) SCHEDULER (Largely unchanged)
 # ==============================================================================
 def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employee_data_list):
     df_long = preprocess_employee_data(employee_data_list)
@@ -92,7 +91,7 @@ def create_schedule_heuristic(store_open_time_obj, store_close_time_obj, employe
     return final_df.to_csv(index=False)
 
 # ==============================================================================
-# SECTION 3: BACKTRACKING (PHOENIX EDITION)
+# SECTION 3: BACKTRACKING (PHOENIX EDITION) - OPTIMIZED
 # ==============================================================================
 def calculate_assignment_cost(pos, emp, prev_state, slot_obj):
     cost = 0
@@ -107,7 +106,16 @@ def calculate_assignment_cost(pos, emp, prev_state, slot_obj):
         cost += 500 # Make it a high-cost violation
     return cost
 
+memo_cache = {} # OPTIMIZATION: Memoization cache
+
 def solve_phoenix_recursive(time_idx, time_slots, availability, schedule, prev_states, best_cost_so_far):
+    # OPTIMIZATION: Memoization - Check cache first
+    state_key = (time_idx, tuple(sorted(prev_states.items())))
+    if state_key in memo_cache:
+        cached_cost, cached_schedule = memo_cache[state_key]
+        if cached_cost <= best_cost_so_far:
+            return cached_cost, cached_schedule
+
     if time_idx >= len(time_slots): return 0, schedule
     slot_str, slot_obj = time_slots[time_idx], parse_time_input(time_slots[time_idx], datetime(1970,1,1).date())
     avail_emps = availability.get(slot_str, [])
@@ -118,29 +126,37 @@ def solve_phoenix_recursive(time_idx, time_slots, availability, schedule, prev_s
     best_schedule_for_rest_of_day = None
 
     for p in permutations(avail_emps):
-        assignments, current_cost, is_valid = {pos: emp for pos, emp in zip(positions_to_fill, p)}, 0, True
+        assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
         
-        for pos, emp in assignments.items():
-            current_cost += calculate_assignment_cost(pos, emp, prev_states.get(emp, {}), slot_obj)
-        
-        if current_cost >= best_cost_at_level:
-            continue
-
+        # OPTIMIZATION: Aggressive Pruning - Check hard rule violations early
+        is_hard_violation = False
         for pos, emp in assignments.items():
             state = prev_states.get(emp, {})
             last_pos, time_in_pos = state.get('last_pos'), state.get('time_in_pos', 0)
             if (pos == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
                (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2):
-                is_valid = False
+                is_hard_violation = True
                 break
-        if not is_valid: continue
+        if is_hard_violation: continue
 
-        new_states = copy.deepcopy(prev_states)
+        current_cost = sum(calculate_assignment_cost(pos, emp, prev_states.get(emp, {}), slot_obj) for pos, emp in assignments.items())
+        
+        if current_cost >= best_cost_at_level:
+            continue
+
+        # OPTIMIZATION: Avoid deepcopy by creating a new state dict on the fly
+        new_states = prev_states.copy()
         for pos, emp in assignments.items():
-            history = new_states.get(emp, {}).get('history', [])
+            state = prev_states.get(emp, {})
+            history = state.get('history', [])
             new_history = (history + [pos])[-4:]
-            time_in_top_tier = 0 if pos in TOP_TIER_ROLES else new_states.get(emp, {}).get('last_top_tier', 100) + 1
-            new_states[emp] = {'last_pos': pos, 'time_in_pos': (prev_states.get(emp,{}).get('time_in_pos',0)+1 if prev_states.get(emp,{}).get('last_pos')==pos else 1), 'history': new_history, 'last_top_tier': time_in_top_tier}
+            time_in_top_tier = 0 if pos in TOP_TIER_ROLES else state.get('last_top_tier', 100) + 1
+            new_states[emp] = {
+                'last_pos': pos, 
+                'time_in_pos': (state.get('time_in_pos', 0) + 1 if state.get('last_pos') == pos else 1), 
+                'history': new_history, 
+                'last_top_tier': time_in_top_tier
+            }
         
         future_cost, resulting_schedule = solve_phoenix_recursive(time_idx + 1, time_slots, availability, schedule, new_states, best_cost_at_level - current_cost)
         
@@ -151,12 +167,17 @@ def solve_phoenix_recursive(time_idx, time_slots, availability, schedule, prev_s
                 resulting_schedule[time_idx] = assignments
                 best_schedule_for_rest_of_day = resulting_schedule
 
-    if best_schedule_for_rest_of_day is None:
-        return float('inf'), None
-
-    return best_cost_at_level, best_schedule_for_rest_of_day
+    # OPTIMIZATION: Memoization - Store result in cache
+    result = (best_cost_at_level, best_schedule_for_rest_of_day) if best_schedule_for_rest_of_day is not None else (float('inf'), None)
+    memo_cache[state_key] = result
+    
+    return result
 
 def create_schedule_phoenix(store_open_time_obj, store_close_time_obj, employee_data_list):
+    # OPTIMIZATION: Reset Memoization Cache for each run
+    global memo_cache
+    memo_cache = {}
+
     df_long = preprocess_employee_data(employee_data_list)
     if df_long.empty: return "No employee data to process."
     time_slots = sorted(df_long['Time'].unique(), key=lambda t: datetime.strptime(t, '%I:%M %p'))
@@ -168,7 +189,7 @@ def create_schedule_phoenix(store_open_time_obj, store_close_time_obj, employee_
     
     note = ""
     if total_cost >= 1000: note = "NOTE: A valid schedule was only found by relaxing the consecutive Line Buster rule.\n\n"
-    if total_cost >= 500 and total_cost < 1000: note = "NOTE: A valid schedule was only found by relaxing the Conductor start time rule.\n\n"
+    elif total_cost >= 500: note = "NOTE: A valid schedule was only found by relaxing the Conductor start time rule.\n\n"
     
     rows = []
     for i, slot_str in enumerate(time_slots):
@@ -181,8 +202,11 @@ def create_schedule_phoenix(store_open_time_obj, store_close_time_obj, employee_
     return note + out_df.to_csv(index=False)
 
 # ==============================================================================
-# SECTION 4: PHOENIX (LIMITED CONDUCTOR BREAKS)
+# SECTION 4: PHOENIX (LIMITED CONDUCTOR BREAKS) - OPTIMIZED
 # ==============================================================================
+# This version also benefits from avoiding deepcopy and aggressive pruning.
+# A separate memoization cache could be added if this function were called frequently.
+
 def solve_phoenix_limited_breaks_recursive(time_idx, time_slots, availability, schedule, prev_states, best_cost_so_far, conductor_breaks_count):
     if time_idx >= len(time_slots): return 0, schedule
     slot_str, slot_obj = time_slots[time_idx], parse_time_input(time_slots[time_idx], datetime(1970,1,1).date())
@@ -197,20 +221,12 @@ def solve_phoenix_limited_breaks_recursive(time_idx, time_slots, availability, s
         assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
         current_cost, is_valid = 0, True
         
-        current_breaks = 0
-        for pos, emp in assignments.items():
-            if pos == 'Conductor' and prev_states.get(emp, {}).get('last_pos') != 'Conductor' and slot_obj.minute != 0:
-                current_breaks += 1
+        current_breaks = sum(1 for pos, emp in assignments.items() if pos == 'Conductor' and prev_states.get(emp, {}).get('last_pos') != 'Conductor' and slot_obj.minute != 0)
         
         if conductor_breaks_count + current_breaks > 2:
             continue
 
-        for pos, emp in assignments.items():
-            current_cost += calculate_assignment_cost(pos, emp, prev_states.get(emp, {}), slot_obj)
-        
-        if current_cost >= best_cost_at_level:
-            continue
-
+        # OPTIMIZATION: Aggressive Pruning
         for pos, emp in assignments.items():
             state = prev_states.get(emp, {})
             last_pos, time_in_pos = state.get('last_pos'), state.get('time_in_pos', 0)
@@ -220,12 +236,24 @@ def solve_phoenix_limited_breaks_recursive(time_idx, time_slots, availability, s
                 break
         if not is_valid: continue
 
-        new_states = copy.deepcopy(prev_states)
+        current_cost = sum(calculate_assignment_cost(pos, emp, prev_states.get(emp, {}), slot_obj) for pos, emp in assignments.items())
+        
+        if current_cost >= best_cost_at_level:
+            continue
+
+        # OPTIMIZATION: Avoid deepcopy
+        new_states = prev_states.copy()
         for pos, emp in assignments.items():
-            history = new_states.get(emp, {}).get('history', [])
+            state = prev_states.get(emp, {})
+            history = state.get('history', [])
             new_history = (history + [pos])[-4:]
-            time_in_top_tier = 0 if pos in TOP_TIER_ROLES else new_states.get(emp, {}).get('last_top_tier', 100) + 1
-            new_states[emp] = {'last_pos': pos, 'time_in_pos': (prev_states.get(emp,{}).get('time_in_pos',0)+1 if prev_states.get(emp,{}).get('last_pos')==pos else 1), 'history': new_history, 'last_top_tier': time_in_top_tier}
+            time_in_top_tier = 0 if pos in TOP_TIER_ROLES else state.get('last_top_tier', 100) + 1
+            new_states[emp] = {
+                'last_pos': pos, 
+                'time_in_pos': (state.get('time_in_pos',0)+1 if state.get('last_pos')==pos else 1), 
+                'history': new_history, 
+                'last_top_tier': time_in_top_tier
+            }
         
         future_cost, resulting_schedule = solve_phoenix_limited_breaks_recursive(
             time_idx + 1, time_slots, availability, schedule, new_states, 
@@ -268,12 +296,12 @@ def create_schedule_phoenix_limited(store_open_time_obj, store_close_time_obj, e
 
 
 # ==============================================================================
-# SECTION 5: BACKTRACKING (CLASSIC)
+# SECTION 5: BACKTRACKING (CLASSIC) - OPTIMIZED
 # ==============================================================================
 def is_assignment_valid_backtracking_classic(assignments, time_slot_obj, prev_states):
     for pos, emp in assignments.items():
         last_pos, time_in_pos = prev_states.get(emp, {}).get('last_pos'), prev_states.get(emp, {}).get('time_in_pos', 0)
-        if (pos in LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 1) or \
+        if (pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES) or \
            (pos == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
            (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2): return False
         if pos == 'Conductor' and last_pos != 'Conductor' and time_slot_obj.minute != 0: return False
@@ -288,9 +316,15 @@ def solve_classic_recursive(time_idx, time_slots, availability, schedule, states
     for p in permutations(avail_emps):
         assignments = {pos: emp for pos, emp in zip(positions_to_fill, p)}
         if is_assignment_valid_backtracking_classic(assignments, slot_obj, states):
-            new_states = copy.deepcopy(states)
+            # OPTIMIZATION: Avoid deepcopy
+            new_states = states.copy()
             for pos, emp in assignments.items():
-                new_states[emp] = {'last_pos': pos, 'time_in_pos': (states.get(emp,{}).get('time_in_pos',0)+1 if states.get(emp,{}).get('last_pos')==pos else 1)}
+                state = states.get(emp, {})
+                new_states[emp] = {
+                    'last_pos': pos, 
+                    'time_in_pos': (state.get('time_in_pos', 0) + 1 if state.get('last_pos') == pos else 1)
+                }
+
             schedule[time_idx] = assignments
             is_solved, final_schedule = solve_classic_recursive(time_idx + 1, time_slots, availability, schedule, new_states)
             if is_solved: return True, final_schedule
@@ -315,7 +349,7 @@ def create_schedule_backtracking_classic(store_open_time_obj, store_close_time_o
     return out_df.to_csv(index=False)
 
 # ==============================================================================
-# SECTION 6: CLASSIC (LIMITED CONDUCTOR BREAKS)
+# SECTION 6: CLASSIC (LIMITED CONDUCTOR BREAKS) - OPTIMIZED
 # ==============================================================================
 def solve_classic_limited_breaks_recursive(time_idx, time_slots, availability, schedule, states, conductor_breaks_count):
     if time_idx >= len(time_slots): return True, schedule
@@ -332,7 +366,7 @@ def solve_classic_limited_breaks_recursive(time_idx, time_slots, availability, s
         for pos, emp in assignments.items():
             last_pos, time_in_pos = states.get(emp, {}).get('last_pos'), states.get(emp, {}).get('time_in_pos', 0)
             
-            if (pos in LINE_BUSTER_ROLES and last_pos == pos and time_in_pos >= 1) or \
+            if (pos in LINE_BUSTER_ROLES and last_pos in LINE_BUSTER_ROLES) or \
                (pos == 'Conductor' and last_pos == 'Conductor' and time_in_pos >= 2) or \
                (pos not in LINE_BUSTER_ROLES and pos != 'Conductor' and last_pos == pos and time_in_pos >= 2):
                 is_valid = False
@@ -344,9 +378,14 @@ def solve_classic_limited_breaks_recursive(time_idx, time_slots, availability, s
         if not is_valid or (conductor_breaks_count + current_breaks > 2):
             continue
 
-        new_states = copy.deepcopy(states)
+        # OPTIMIZATION: Avoid deepcopy
+        new_states = states.copy()
         for pos, emp in assignments.items():
-            new_states[emp] = {'last_pos': pos, 'time_in_pos': (states.get(emp,{}).get('time_in_pos',0)+1 if states.get(emp,{}).get('last_pos')==pos else 1)}
+            state = states.get(emp, {})
+            new_states[emp] = {
+                'last_pos': pos,
+                'time_in_pos': (state.get('time_in_pos',0)+1 if state.get('last_pos')==pos else 1)
+            }
         
         schedule[time_idx] = assignments
         is_solved, final_schedule = solve_classic_limited_breaks_recursive(time_idx + 1, time_slots, availability, schedule, new_states, conductor_breaks_count + current_breaks)
@@ -378,92 +417,104 @@ def create_schedule_classic_limited(store_open_time_obj, store_close_time_obj, e
     return note + out_df.to_csv(index=False)
 
 # ==============================================================================
-# SECTION 7: PHOENIX (DIVERSE)
+# SECTION 7: PHOENIX (DIVERSE) - OPTIMIZED
 # ==============================================================================
-def is_swap_safe(df, time_idx, emp1_name, emp2_name, pos1, pos2):
+def is_swap_safe(df, time_idx, emp1_name, emp2_name, pos1, pos2, employee_schedule_map):
+    # OPTIMIZATION: Uses the pre-computed employee_schedule_map for faster lookups
     def check_employee_validity(emp_name, new_pos, current_time_idx):
+        # Check previous position
         if current_time_idx > 0:
-            prev_slot_col = df.columns[current_time_idx - 1]
-            last_pos_series = df[prev_slot_col][df[prev_slot_col] == emp_name]
-            if not last_pos_series.empty:
-                last_pos = last_pos_series.index[0]
+            # Find the assignment for the previous time slot
+            prev_assignment = next((item for item in reversed(employee_schedule_map[emp_name]) if item['time_idx'] < current_time_idx), None)
+            if prev_assignment:
+                last_pos = prev_assignment['pos']
                 if new_pos in LINE_BUSTER_ROLES and new_pos == last_pos:
                     return False
                 if new_pos not in LINE_BUSTER_ROLES and new_pos != 'Conductor' and new_pos == last_pos:
                     if current_time_idx > 1:
-                        prev_prev_slot_col = df.columns[current_time_idx - 2]
-                        prev_prev_pos_series = df[prev_prev_slot_col][df[prev_prev_slot_col] == emp_name]
-                        if not prev_prev_pos_series.empty and prev_prev_pos_series.index[0] == new_pos:
+                        # Find the assignment before the previous one
+                        prev_prev_assignment = next((item for item in reversed(employee_schedule_map[emp_name]) if item['time_idx'] < prev_assignment['time_idx']), None)
+                        if prev_prev_assignment and prev_prev_assignment['pos'] == new_pos:
                             return False
+        # Check next position
         if current_time_idx < len(df.columns) - 1:
-            next_slot_col = df.columns[current_time_idx + 1]
-            next_pos_series = df[next_slot_col][df[next_slot_col] == emp_name]
-            if not next_pos_series.empty:
-                next_pos = next_pos_series.index[0]
+            next_assignment = next((item for item in employee_schedule_map[emp_name] if item['time_idx'] > current_time_idx), None)
+            if next_assignment:
+                next_pos = next_assignment['pos']
                 if next_pos in LINE_BUSTER_ROLES and next_pos == new_pos:
                     return False
         return True
+    
     return check_employee_validity(emp1_name, pos2, time_idx) and check_employee_validity(emp2_name, pos1, time_idx)
 
 def create_schedule_phoenix_diverse(store_open_time_obj, store_close_time_obj, employee_data_list):
     initial_schedule_csv = create_schedule_phoenix(store_open_time_obj, store_close_time_obj, employee_data_list)
-    if "Could not find" in initial_schedule_csv:
+    if "Could not find" in initial_schedule_csv or not employee_data_list:
         return initial_schedule_csv
 
     note, csv_data = (initial_schedule_csv.split('\n\n', 1) if "NOTE:" in initial_schedule_csv else ("", initial_schedule_csv))
     
-    df = pd.read_csv(StringIO(csv_data))
-    df = df.set_index('Position')
+    df = pd.read_csv(StringIO(csv_data)).set_index('Position')
+
+    # OPTIMIZATION: Pre-process the schedule into an employee-centric map for fast lookups.
+    employee_schedule_map = {emp: [] for emp in pd.unique(df.values.ravel()) if isinstance(emp, str) and emp}
+    time_slot_map = {name: i for i, name in enumerate(df.columns)}
+    for time_slot, i in time_slot_map.items():
+        for pos in df.index:
+            emp = df.loc[pos, time_slot]
+            if isinstance(emp, str) and emp:
+                employee_schedule_map[emp].append({'time_idx': i, 'time_str': time_slot, 'pos': pos})
 
     swaps_made = 0
-    for _ in range(5): 
+    for _ in range(5): # Limit passes to prevent excessive processing
         made_a_swap_this_pass = False
-        for i in range(len(df.columns)): 
-            time_slot = df.columns[i]
-            for emp_name in df[time_slot].dropna().unique():
-                if emp_name == "": continue
+        for time_idx, time_slot in enumerate(df.columns):
+            for current_pos in df.index:
+                if current_pos in ['Break', 'ToffTL', 'Conductor']: continue
                 
-                window_start = max(0, i - 5) 
-                window_end = i + 1
-                window_slots = df.columns[window_start:window_end]
+                emp_name = df.loc[current_pos, time_slot]
+                if not isinstance(emp_name, str) or not emp_name: continue
                 
-                emp_positions_in_window = []
-                for slot in window_slots:
-                    pos_series = df[slot][df[slot] == emp_name]
-                    if not pos_series.empty:
-                        emp_positions_in_window.append(pos_series.index[0])
-                    else:
-                        emp_positions_in_window.append(None) 
-
-                current_pos = emp_positions_in_window[-1] if emp_positions_in_window else None
-                if not current_pos or current_pos == 'Conductor':
-                    continue
-
+                # OPTIMIZATION: Use the map for faster pattern checking
+                emp_history = [item for item in employee_schedule_map[emp_name] if item['time_idx'] <= time_idx]
+                
                 is_repetitive = False
-                if len(emp_positions_in_window) >= 3 and emp_positions_in_window[-1] == emp_positions_in_window[-3]:
-                    is_repetitive = True
-                
-                if emp_positions_in_window.count(current_pos) > 1:
-                    is_repetitive = True
+                # Check for "on-off-on" pattern: e.g., Handout -> (off) -> Handout
+                if len(emp_history) >= 2 and emp_history[-1]['pos'] == current_pos:
+                    # Find last time they worked
+                    last_work_idx = emp_history[-2]['time_idx']
+                    if time_idx - last_work_idx > 1: # They had a gap
+                       is_repetitive = True
+
+                # Check for simple repetition in a recent window
+                if not is_repetitive:
+                    recent_positions = [h['pos'] for h in emp_history[-3:]]
+                    if recent_positions.count(current_pos) > 1:
+                        is_repetitive = True
                 
                 if is_repetitive:
                     for other_pos in df.index:
                         if other_pos == current_pos or other_pos in ['Break', 'ToffTL']: continue
                         
                         other_emp = df.loc[other_pos, time_slot]
-                        if pd.notna(other_emp) and other_emp != emp_name:
-                            if is_swap_safe(df, i, emp_name, other_emp, current_pos, other_pos):
-                                df.loc[current_pos, time_slot] = other_emp
-                                df.loc[other_pos, time_slot] = emp_name
+                        if isinstance(other_emp, str) and other_emp and other_emp != emp_name:
+                            if is_swap_safe(df, time_idx, emp_name, other_emp, current_pos, other_pos, employee_schedule_map):
+                                # Perform the swap
+                                df.loc[current_pos, time_slot], df.loc[other_pos, time_slot] = other_emp, emp_name
+                                
+                                # Update the map to reflect the swap
+                                for item in employee_schedule_map[emp_name]:
+                                    if item['time_idx'] == time_idx: item['pos'] = other_pos
+                                for item in employee_schedule_map[other_emp]:
+                                    if item['time_idx'] == time_idx: item['pos'] = current_pos
+                                
                                 swaps_made += 1
                                 made_a_swap_this_pass = True
                                 break 
-                    if made_a_swap_this_pass:
-                        break
-            if made_a_swap_this_pass:
-                break
+                    if made_a_swap_this_pass: break
+            if made_a_swap_this_pass: break
     
     if swaps_made > 0:
-        note += f"{swaps_made} diversity swaps made. "
+        note += f"{swaps_made} diversity swap(s) made. "
 
     return note.strip() + "\n\n" + df.reset_index().to_csv(index=False)
